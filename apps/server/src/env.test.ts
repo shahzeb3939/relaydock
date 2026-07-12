@@ -1,0 +1,62 @@
+import { describe, expect, it } from 'vitest';
+
+import { parseServerEnvironment } from './env.js';
+
+const baseEnvironment = {
+  DATABASE_URL: 'postgresql://relaydock:relaydock@localhost:5432/relaydock',
+  RELAYDOCK_SESSION_PEPPER: 'a-secure-test-secret-with-more-than-32-characters',
+  RELAYDOCK_CREDENTIAL_PEPPER: 'a-distinct-device-secret-with-more-than-32-characters',
+};
+
+describe('server environment', () => {
+  it('parses booleans without treating the string false as true', () => {
+    const environment = parseServerEnvironment({
+      ...baseEnvironment,
+      RELAYDOCK_ALLOW_REGISTRATION: 'false',
+      RELAYDOCK_TRUST_PROXY: 'true',
+    });
+    expect(environment.ALLOW_REGISTRATION).toBe(false);
+    expect(environment.TRUST_PROXY).toBe(true);
+    expect(environment.cookieSecure).toBe(false);
+  });
+
+  it('requires enough entropy in the token hashing secret', () => {
+    expect(() =>
+      parseServerEnvironment({ ...baseEnvironment, RELAYDOCK_SESSION_PEPPER: 'too-short' }),
+    ).toThrow();
+  });
+
+  it('rejects a heartbeat timeout shorter than the heartbeat interval', () => {
+    expect(() =>
+      parseServerEnvironment({
+        ...baseEnvironment,
+        RELAYDOCK_HEARTBEAT_INTERVAL_MS: '15000',
+        RELAYDOCK_OFFLINE_AFTER_MS: '15000',
+      }),
+    ).toThrow(/OFFLINE_AFTER_MS/);
+  });
+
+  it('prefers RelayDock-prefixed values over legacy aliases', () => {
+    const environment = parseServerEnvironment({
+      ...baseEnvironment,
+      PORT: '9999',
+      RELAYDOCK_PORT: '3100',
+      ALLOWED_ORIGINS: 'https://legacy.example',
+      RELAYDOCK_WEB_ORIGIN: 'https://relay.example',
+    });
+    expect(environment.PORT).toBe(3100);
+    expect(environment.ALLOWED_ORIGINS).toEqual(['https://relay.example']);
+  });
+
+  it('requires independent session and device peppers in production', () => {
+    const sharedPepper = 'this-value-is-long-enough-but-intentionally-reused';
+    expect(() =>
+      parseServerEnvironment({
+        ...baseEnvironment,
+        NODE_ENV: 'production',
+        RELAYDOCK_SESSION_PEPPER: sharedPepper,
+        RELAYDOCK_CREDENTIAL_PEPPER: sharedPepper,
+      }),
+    ).toThrow(/CREDENTIAL_SECRET/);
+  });
+});
