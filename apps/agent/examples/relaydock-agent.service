@@ -1,0 +1,16 @@
+[Unit]
+Description=RelayDock laptop agent
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=YOUR_USER
+ExecStart=/usr/local/bin/relaydock-agent run
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target
