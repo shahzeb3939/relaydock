@@ -10,7 +10,7 @@ openssl rand -hex 32
 openssl rand -hex 32
 ```
 
-Set a unique database password, independent session and credential peppers, the public HTTPS URL, and the exact browser origin. Set `RELAYDOCK_ALLOW_REGISTRATION=true` only long enough to create the initial account.
+Set a unique database password, independent session and credential peppers, and `RELAYDOCK_WEB_ORIGIN` to the exact public HTTPS origin. Set `RELAYDOCK_ALLOW_REGISTRATION=true` only long enough to create the initial account.
 
 ```bash
 docker compose --profile app up -d --build
@@ -21,7 +21,7 @@ The web container listens on host port 8080 by default and proxies `/api` and `/
 ## TLS and network rules
 
 - Expose only TCP 443 from the internet; redirect HTTP to HTTPS.
-- Do not publish PostgreSQL publicly. The development port mapping should be removed or firewalled in production.
+- Do not publish PostgreSQL publicly. The included development mapping is loopback-only; remove it entirely in production when host access is unnecessary.
 - Agents must use an `https://` URL, which becomes `wss://` for their sockets.
 - Forward the original host and scheme so secure cookies and origin checks behave correctly.
 - Apply upstream request limits no lower than the protocol's 256 KiB maximum WebSocket message.

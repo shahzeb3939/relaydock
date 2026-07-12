@@ -44,6 +44,8 @@ See [docs/progress.md](docs/progress.md) for the verification state of each cont
 - The permission-restricted JSON agent config is weaker than an OS keychain.
 - In-memory agent buffers are lost on agent restart.
 - Custom commands remain inherently equivalent to remote shell access.
+- Actions currently use the repository's configured shell even when a future direct argv mode would be sufficient.
+- Device revocation prevents new instructions and reconnects but cannot retract a command the agent already accepted; stop the local agent or process when immediate termination is required.
 - The first release does not provide organization roles, multi-party approval, or per-command sandboxing.
 - Interactive PTY support is Unix-first; Windows parity requires ConPTY work.
 

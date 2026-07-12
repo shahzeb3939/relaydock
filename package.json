@@ -7,18 +7,24 @@
     "node": ">=22"
   },
   "scripts": {
-    "build": "pnpm --filter @relaydock/protocol build && pnpm --filter @relaydock/config build && pnpm --filter @relaydock/shared build && pnpm --filter @relaydock/server build && pnpm --filter @relaydock/web build",
+    "build": "pnpm build:ts && pnpm build:agent",
+    "build:ts": "pnpm --filter @relaydock/protocol build && pnpm --filter @relaydock/config build && pnpm --filter @relaydock/shared build && pnpm --filter @relaydock/server build && pnpm --filter @relaydock/web build",
+    "build:agent": "cd apps/agent && go build -trimpath -o bin/relaydock-agent .",
     "dev": "pnpm --filter @relaydock/protocol build && pnpm --filter @relaydock/config build && pnpm --filter @relaydock/shared build && pnpm --parallel --filter @relaydock/server --filter @relaydock/web dev",
-    "format": "prettier --write .",
-    "format:check": "prettier --check .",
-    "lint": "pnpm -r --if-present lint",
+    "format": "prettier --write . && make -C apps/agent format",
+    "format:check": "prettier --check . && make -C apps/agent format-check",
+    "lint": "pnpm typecheck && pnpm lint:agent",
+    "lint:agent": "cd apps/agent && go vet ./...",
     "test": "pnpm --filter @relaydock/protocol test && pnpm --filter @relaydock/shared test && pnpm --filter @relaydock/server test && pnpm --filter @relaydock/web test && pnpm test:agent",
     "test:agent": "cd apps/agent && go test ./...",
+    "test:agent:race": "cd apps/agent && go test -race ./...",
     "typecheck": "pnpm --filter @relaydock/protocol typecheck && pnpm --filter @relaydock/config typecheck && pnpm --filter @relaydock/shared typecheck && pnpm --filter @relaydock/server typecheck && pnpm --filter @relaydock/web typecheck",
     "prisma:generate": "pnpm --filter @relaydock/server prisma:generate",
-    "prisma:migrate": "pnpm --filter @relaydock/server prisma:migrate"
+    "prisma:migrate": "pnpm --filter @relaydock/server prisma:migrate",
+    "smoke:ws": "node scripts/ws-job-smoke.mjs"
   },
   "devDependencies": {
-    "prettier": "^3.5.3"
+    "prettier": "^3.5.3",
+    "ws": "^8.21.0"
   }
 }

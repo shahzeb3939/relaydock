@@ -5,6 +5,7 @@ coverage/
 .DS_Store
 *.log
 *.test
+*.tsbuildinfo
 apps/server/prisma/dev.db
 apps/agent/relaydock-agent
 tmp/

@@ -2,3 +2,10 @@ packages:
   - 'apps/server'
   - 'apps/web'
   - 'packages/*'
+
+onlyBuiltDependencies:
+  - '@prisma/client'
+  - '@prisma/engines'
+  - argon2
+  - esbuild
+  - prisma

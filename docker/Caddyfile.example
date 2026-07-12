@@ -1,15 +1,7 @@
 relay.example.com {
   encode zstd gzip
-
-  handle /api/* {
-    reverse_proxy relaydock-server:3000
-  }
-
-  handle /ws/* {
-    reverse_proxy relaydock-server:3000
-  }
-
-  handle {
-    reverse_proxy relaydock-web:8080
-  }
+  # The web container already proxies /api and /ws to the server. Caddy
+  # preserves WebSocket upgrades automatically. Change this address if Caddy
+  # itself runs inside the RelayDock Compose network.
+  reverse_proxy 127.0.0.1:8080
 }

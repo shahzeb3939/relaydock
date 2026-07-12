@@ -15,7 +15,7 @@ dev:
 	pnpm dev
 
 agent:
-	cd apps/agent && go run ./cmd/relaydock-agent run --server http://localhost:3000
+	cd apps/agent && go run . run
 
 test:
 	pnpm test

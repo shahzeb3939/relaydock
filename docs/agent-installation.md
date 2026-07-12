@@ -4,7 +4,7 @@ Build the agent on the computer that will execute commands:
 
 ```bash
 cd apps/agent
-go build -o relaydock-agent ./cmd/relaydock-agent
+go build -o relaydock-agent .
 install -m 0755 relaydock-agent "$HOME/.local/bin/relaydock-agent"
 ```
 
@@ -25,7 +25,7 @@ Homebrew, `nvm`, `fnm`, `pyenv`, and similar tools often require login-shell ini
 
 ## macOS launchd
 
-Copy `apps/agent/service/com.relaydock.agent.plist.example` to `~/Library/LaunchAgents/com.relaydock.agent.plist`, replace the binary and home paths, then:
+Copy `apps/agent/examples/com.relaydock.agent.plist` to `~/Library/LaunchAgents/com.relaydock.agent.plist`, replace the binary and home paths, then:
 
 ```bash
 launchctl bootstrap "gui/$(id -u)" ~/Library/LaunchAgents/com.relaydock.agent.plist
@@ -36,7 +36,7 @@ Use a per-user LaunchAgent, not root, so commands have the same file access as y
 
 ## Linux systemd
 
-Copy `apps/agent/service/relaydock-agent.service.example` to `~/.config/systemd/user/relaydock-agent.service`, adjust paths, then:
+Copy `apps/agent/examples/relaydock-agent.service` to `~/.config/systemd/user/relaydock-agent.service`, adjust paths, then:
 
 ```bash
 systemctl --user daemon-reload

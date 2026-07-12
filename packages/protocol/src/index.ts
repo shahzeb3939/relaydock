@@ -51,7 +51,11 @@ export const agentToServerMessageSchema = z.discriminatedUnion('type', [
   envelope('agent.heartbeat', z.object({ deviceId: id })),
   envelope(
     'agent.status',
-    z.object({ deviceId: id, status: z.enum(['online', 'offline']), detail: z.string().max(500).optional() }),
+    z.object({
+      deviceId: id,
+      status: z.enum(['online', 'offline']),
+      detail: z.string().max(500).optional(),
+    }),
   ),
   envelope(
     'repository.validation.result',
@@ -75,11 +79,20 @@ export const agentToServerMessageSchema = z.discriminatedUnion('type', [
       data: z.string().max(MAX_OUTPUT_CHUNK_BYTES),
     }),
   ),
-  envelope('job.status', jobRef.extend({ status: jobStatusSchema, detail: z.string().max(1000).optional() })),
+  envelope(
+    'job.status',
+    jobRef.extend({ status: jobStatusSchema, detail: z.string().max(1000).optional() }),
+  ),
   envelope('job.completed', jobRef.extend({ exitCode: z.number().int() })),
-  envelope('job.failed', jobRef.extend({ error: z.string().min(1).max(2000), exitCode: z.number().int().optional() })),
+  envelope(
+    'job.failed',
+    jobRef.extend({ error: z.string().min(1).max(2000), exitCode: z.number().int().optional() }),
+  ),
   envelope('job.cancelled', jobRef),
-  envelope('job.input.acknowledged', jobRef.extend({ inputSequence: z.number().int().nonnegative() })),
+  envelope(
+    'job.input.acknowledged',
+    jobRef.extend({ inputSequence: z.number().int().nonnegative() }),
+  ),
   envelope(
     'job.buffer.sync',
     jobRef.extend({
@@ -99,7 +112,11 @@ export const agentToServerMessageSchema = z.discriminatedUnion('type', [
 export const serverToAgentMessageSchema = z.discriminatedUnion('type', [
   envelope(
     'agent.welcome',
-    z.object({ deviceId: id, heartbeatIntervalMs: z.number().int().min(1000), serverTime: timestamp }),
+    z.object({
+      deviceId: id,
+      heartbeatIntervalMs: z.number().int().min(1000),
+      serverTime: timestamp,
+    }),
   ),
   envelope(
     'repository.validate',
@@ -122,18 +139,37 @@ export const serverToAgentMessageSchema = z.discriminatedUnion('type', [
       rows: z.number().int().min(2).max(1000),
     }),
   ),
-  envelope('job.input', jobRef.extend({ inputSequence: z.number().int().nonnegative(), data: z.string().max(64 * 1024) })),
+  envelope(
+    'job.input',
+    jobRef.extend({
+      inputSequence: z.number().int().nonnegative(),
+      data: z.string().max(64 * 1024),
+    }),
+  ),
   envelope(
     'job.resize',
-    jobRef.extend({ columns: z.number().int().min(10).max(1000), rows: z.number().int().min(2).max(1000) }),
+    jobRef.extend({
+      columns: z.number().int().min(10).max(1000),
+      rows: z.number().int().min(2).max(1000),
+    }),
   ),
   envelope('job.cancel', jobRef),
   envelope('job.buffer.request', jobRef.extend({ afterSequence: z.number().int().min(-1) })),
 ]);
 
 export const serverToClientMessageSchema = z.discriminatedUnion('type', [
-  envelope('device.status', z.object({ deviceId: id, status: z.enum(['online', 'offline', 'revoked']), lastSeenAt: timestamp })),
-  envelope('job.status', jobRef.extend({ status: jobStatusSchema, exitCode: z.number().int().nullable().optional() })),
+  envelope(
+    'device.status',
+    z.object({
+      deviceId: id,
+      status: z.enum(['online', 'offline', 'revoked']),
+      lastSeenAt: timestamp,
+    }),
+  ),
+  envelope(
+    'job.status',
+    jobRef.extend({ status: jobStatusSchema, exitCode: z.number().int().nullable().optional() }),
+  ),
   envelope(
     'job.output',
     jobRef.extend({
@@ -143,16 +179,31 @@ export const serverToClientMessageSchema = z.discriminatedUnion('type', [
     }),
   ),
   envelope('job.completed', jobRef.extend({ exitCode: z.number().int() })),
-  envelope('job.failed', jobRef.extend({ error: z.string().max(2000), exitCode: z.number().int().nullable().optional() })),
+  envelope(
+    'job.failed',
+    jobRef.extend({
+      error: z.string().max(2000),
+      exitCode: z.number().int().nullable().optional(),
+    }),
+  ),
 ]);
 
 export const clientToServerMessageSchema = z.discriminatedUnion('type', [
   envelope('job.subscribe', jobRef.extend({ afterSequence: z.number().int().min(-1).default(-1) })),
   envelope('job.unsubscribe', jobRef),
-  envelope('job.input', jobRef.extend({ inputSequence: z.number().int().nonnegative(), data: z.string().max(64 * 1024) })),
+  envelope(
+    'job.input',
+    jobRef.extend({
+      inputSequence: z.number().int().nonnegative(),
+      data: z.string().max(64 * 1024),
+    }),
+  ),
   envelope(
     'job.resize',
-    jobRef.extend({ columns: z.number().int().min(10).max(1000), rows: z.number().int().min(2).max(1000) }),
+    jobRef.extend({
+      columns: z.number().int().min(10).max(1000),
+      rows: z.number().int().min(2).max(1000),
+    }),
   ),
   envelope('job.cancel', jobRef),
 ]);

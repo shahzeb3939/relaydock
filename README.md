@@ -59,12 +59,12 @@ In the web app, choose **Add device** and generate a short-lived pairing code. O
 
 ```bash
 cd apps/agent
-go run ./cmd/relaydock-agent pair \
+go run . pair \
   --server http://localhost:3000 \
   --code ABCD-EFGH \
   --name "MacBook Pro"
 
-go run ./cmd/relaydock-agent run
+go run . run
 ```
 
 The raw credential is written to `~/.config/relaydock/agent.json` with mode `0600`. Production pairing must use an `https://` server URL. See [agent installation](docs/agent-installation.md) for background services.
@@ -106,6 +106,8 @@ Screenshots will be added after the mobile UX stabilizes. The implemented screen
 - Agent-side reconnect output buffering is bounded in memory; it is not disk-backed.
 - The server can read terminal output; payloads are not end-to-end encrypted.
 - Commands inherit the agent account's permissions and selected environment only.
+- MVP actions execute through the repository's explicitly configured shell; a direct argv action mode is planned for commands that do not need shell syntax.
+- Revocation blocks new instructions and reconnects immediately, but a process already accepted by the agent can continue locally until it exits or the agent is stopped.
 - Windows interactive ConPTY support and a first-party service installer are not yet available.
 - One active interactive writer is the intended MVP behavior; multiple read-only viewers may observe output.
 
@@ -124,7 +126,7 @@ Screenshots will be added after the mobile UX stabilizes. The implemented screen
 1. Disk-backed encrypted agent output buffering and session recovery.
 2. Windows ConPTY support and signed cross-platform installers.
 3. Hardware-backed credential storage using native keychains.
-4. Fine-grained action argument templates and approval policies.
-5. Optional end-to-end encrypted terminal payloads.
+4. Direct argv actions plus fine-grained argument templates and approval policies.
+5. Hermetic browser/server/agent end-to-end tests in CI.
 
 RelayDock is not a remote desktop, browser SSH server, source editor, or public command webhook.

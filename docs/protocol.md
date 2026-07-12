@@ -18,21 +18,21 @@ Messages with unknown versions, types, invalid UUIDs, invalid timestamps, or pay
 
 ## Agent to server
 
-| Type | Purpose |
-| --- | --- |
-| `agent.hello` | Advertise device identity, agent version, protocol support, and running jobs. |
-| `agent.heartbeat` | Refresh presence. |
-| `agent.status` | Report an agent status detail. |
-| `repository.validation.result` | Return canonical path, repository root, Git state, branch, or error. |
-| `job.accepted` | Acknowledge an authorized start request. |
-| `job.started` | Report the local process start and optional PID. |
-| `job.output` | Deliver one sequence-numbered stdout, stderr, or system chunk. |
-| `job.status` | Report an intermediate state. |
-| `job.completed` | Report normal process exit and code. |
-| `job.failed` | Report a start or execution failure. |
-| `job.cancelled` | Confirm cancellation. |
-| `job.input.acknowledged` | Acknowledge interactive input sequence. |
-| `job.buffer.sync` | Replay a bounded set of chunks after reconnect. |
+| Type                           | Purpose                                                                       |
+| ------------------------------ | ----------------------------------------------------------------------------- |
+| `agent.hello`                  | Advertise device identity, agent version, protocol support, and running jobs. |
+| `agent.heartbeat`              | Refresh presence.                                                             |
+| `agent.status`                 | Report an agent status detail.                                                |
+| `repository.validation.result` | Return canonical path, repository root, Git state, branch, or error.          |
+| `job.accepted`                 | Acknowledge an authorized start request.                                      |
+| `job.started`                  | Report the local process start and optional PID.                              |
+| `job.output`                   | Deliver one sequence-numbered stdout, stderr, or system chunk.                |
+| `job.status`                   | Report an intermediate state.                                                 |
+| `job.completed`                | Report normal process exit and code.                                          |
+| `job.failed`                   | Report a start or execution failure.                                          |
+| `job.cancelled`                | Confirm cancellation.                                                         |
+| `job.input.acknowledged`       | Acknowledge interactive input sequence.                                       |
+| `job.buffer.sync`              | Replay a bounded set of chunks after reconnect.                               |
 
 ## Server to agent
 
