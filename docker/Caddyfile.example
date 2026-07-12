@@ -1,0 +1,15 @@
+relay.example.com {
+  encode zstd gzip
+
+  handle /api/* {
+    reverse_proxy relaydock-server:3000
+  }
+
+  handle /ws/* {
+    reverse_proxy relaydock-server:3000
+  }
+
+  handle {
+    reverse_proxy relaydock-web:8080
+  }
+}
