@@ -1635,10 +1635,17 @@ input[type='checkbox'] {
   text-align: center;
 }
 
-.pairing-result > label {
+.pairing-command-label {
   color: var(--muted);
   font-size: 0.7rem;
   font-weight: 700;
+}
+
+.pairing-detail {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.76rem;
+  line-height: 1.55;
 }
 
 .copy-field {
@@ -1654,13 +1661,16 @@ input[type='checkbox'] {
   min-width: 0;
   flex: 1;
   padding: 11px;
-  overflow: auto;
+  overflow-wrap: anywhere;
   color: var(--muted);
   font-size: 0.68rem;
-  white-space: nowrap;
+  line-height: 1.5;
+  user-select: all;
+  white-space: pre-wrap;
 }
 
 .copy-field button {
+  min-width: 108px;
   border: 0;
   border-left: 1px solid var(--border-strong);
   background: var(--surface-raised);
@@ -2093,6 +2103,16 @@ input[type='checkbox'] {
 
   .pairing-code {
     letter-spacing: 0.1em;
+  }
+
+  .copy-field {
+    flex-direction: column;
+  }
+
+  .copy-field button {
+    min-height: 44px;
+    border-top: 1px solid var(--border-strong);
+    border-left: 0;
   }
 }
 

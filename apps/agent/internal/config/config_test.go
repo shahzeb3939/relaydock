@@ -1,6 +1,7 @@
 package config
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -65,6 +66,44 @@ func TestSaveDoesNotChangeExistingParentPermissions(t *testing.T) {
 	}
 	if after.Mode().Perm() != before.Mode().Perm() {
 		t.Fatalf("parent mode changed from %04o to %04o", before.Mode().Perm(), after.Mode().Perm())
+	}
+}
+
+func TestSaveNewRefusesToReplaceExistingConfiguration(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "nested", "agent.json")
+	first := validConfig(t.TempDir())
+	if err := SaveNew(path, first); err != nil {
+		t.Fatalf("SaveNew() first error = %v", err)
+	}
+	before, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	second := validConfig(t.TempDir())
+	if err := SaveNew(path, second); !errors.Is(err, os.ErrExist) {
+		t.Fatalf("SaveNew() replacement error = %v, want os.ErrExist", err)
+	}
+	after, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(after) != string(before) {
+		t.Fatal("SaveNew() changed the existing configuration")
+	}
+	assertConfigMode(t, path, 0o600)
+}
+
+func assertConfigMode(t *testing.T, path string, want os.FileMode) {
+	t.Helper()
+	if runtime.GOOS == "windows" {
+		return
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Mode().Perm() != want {
+		t.Fatalf("config mode = %04o, want %04o", info.Mode().Perm(), want)
 	}
 }
 

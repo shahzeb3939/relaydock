@@ -57,6 +57,7 @@ Interactive PTY input, resize, cancellation, and agent-side reconnect buffering 
 - [x] Add non-interactive execution and bounded output buffering.
 - [x] Add PTY sessions, stdin, resize, persistence, and cancellation.
 - [x] Add macOS launchd, Linux systemd, and Windows service guidance.
+- [x] Add checksum-verified prebuilt macOS/Linux distributions and automatic user-service installation.
 
 ### Mobile PWA
 
@@ -81,10 +82,11 @@ Interactive PTY input, resize, cancellation, and agent-side reconnect buffering 
 
 - `pnpm format:check`: passed.
 - `pnpm lint`: passed strict TypeScript checks for all packages/apps plus `go vet ./...`.
-- `pnpm test`: passed 28 TypeScript/Vitest tests plus every Go package test.
+- `pnpm test`: passed all TypeScript/Vitest suites, every Go package test, and the agent bootstrap tests.
 - `pnpm test:agent:race`: passed for all Go packages.
 - `pnpm build`: passed protocol/config/shared/server/web production builds and the native agent build.
-- Cross-compilation passed for macOS arm64, Linux amd64, and Windows amd64.
+- Deterministic cross-compilation and checksum regeneration passed for macOS and Linux on amd64 and arm64.
+- The no-prerequisite bootstrap passed platform selection, argument forwarding, root/HTTP rejection, checksum failure, and version failure tests.
 - The production service worker's shell-asset discovery matched every hashed entry asset.
 - Prisma schema validation and the initial migration against isolated PostgreSQL 16 passed.
 - `docker compose --profile app config --quiet`: passed with production-like settings.

@@ -44,4 +44,5 @@ jobs:
       - run: pnpm lint
       - run: pnpm test
       - run: pnpm test:agent:race
+      - run: pnpm check:agent:distributions
       - run: pnpm build

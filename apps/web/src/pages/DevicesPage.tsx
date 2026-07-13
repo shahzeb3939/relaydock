@@ -14,6 +14,7 @@ import {
 } from '../components/Feedback';
 import { Modal } from '../components/Modal';
 import { errorMessage, formatRelativeTime } from '../lib';
+import { buildAgentInstallCommand } from '../lib/agentInstall';
 
 function DeviceCard({ device, onRevoke }: { device: Device; onRevoke: (device: Device) => void }) {
   return (
@@ -59,7 +60,7 @@ function DeviceCard({ device, onRevoke }: { device: Device; onRevoke: (device: D
   );
 }
 
-function PairDeviceModal({
+export function PairDeviceModal({
   pairing,
   loading,
   error,
@@ -73,19 +74,30 @@ function PairDeviceModal({
   onGenerate: () => void;
 }) {
   const [copied, setCopied] = useState(false);
-  const command = pairing
-    ? `relaydock-agent pair --server ${window.location.origin} --code ${pairing.code}`
-    : '';
+  const [copyError, setCopyError] = useState<string | null>(null);
+  const command = pairing ? buildAgentInstallCommand(window.location.origin, pairing.code) : '';
   const copy = async () => {
-    await navigator.clipboard.writeText(command);
-    setCopied(true);
-    window.setTimeout(() => setCopied(false), 1800);
+    setCopied(false);
+    setCopyError(null);
+    try {
+      if (!navigator.clipboard?.writeText) throw new Error('Clipboard access is unavailable.');
+      await navigator.clipboard.writeText(command);
+      setCopied(true);
+      window.setTimeout(() => setCopied(false), 1800);
+    } catch {
+      setCopyError('Could not copy automatically. Select and copy the command manually.');
+    }
+  };
+  const regenerate = () => {
+    setCopied(false);
+    setCopyError(null);
+    onGenerate();
   };
 
   return (
     <Modal
       title="Add a device"
-      description="Pair an agent over its outbound secure connection."
+      description="Install, pair, and keep RelayDock running with one command."
       onClose={onClose}
     >
       {error && <InlineAlert tone="danger">{error}</InlineAlert>}
@@ -94,15 +106,21 @@ function PairDeviceModal({
           <ol className="steps">
             <li>
               <span>1</span>
-              <p>Install and start the RelayDock agent on your laptop.</p>
+              <p>Generate a short-lived setup code.</p>
             </li>
             <li>
               <span>2</span>
-              <p>Generate a one-time code, then run the command on that laptop.</p>
+              <p>
+                Copy the command and run it once in Terminal on the device you want to add. No Go
+                installation or repository checkout is needed.
+              </p>
             </li>
             <li>
               <span>3</span>
-              <p>The new device appears here as soon as it connects.</p>
+              <p>
+                The installer pairs the device and starts RelayDock automatically whenever you log
+                in, including after a restart.
+              </p>
             </li>
           </ol>
           <button
@@ -123,19 +141,34 @@ function PairDeviceModal({
           <div className="pairing-code" aria-label={`Pairing code ${pairing.code}`}>
             {pairing.code}
           </div>
-          <label>
-            Run on your laptop
+          <div className="pairing-command">
+            <span className="pairing-command-label">Run this once in Terminal</span>
             <div className="copy-field">
-              <code>{command}</code>
+              <code aria-label="RelayDock setup command">{command}</code>
               <button type="button" onClick={() => void copy()}>
-                {copied ? 'Copied' : 'Copy'}
+                {copied ? 'Copied' : 'Copy command'}
               </button>
             </div>
-          </label>
+          </div>
+          {copyError && <InlineAlert tone="danger">{copyError}</InlineAlert>}
           <InlineAlert>
-            Keep this window open while the agent pairs. You can close it safely after the device
-            appears.
+            Pairing is saved on this device, so you do not need to pair it again after closing
+            Terminal or restarting. Pair again only if you revoke the device or delete its local
+            agent configuration.
           </InlineAlert>
+          <p className="pairing-detail">
+            RelayDock uses the device hostname as its name and runs in the background after setup.
+            It should appear here within a few seconds.
+          </p>
+          <button
+            className="button secondary full-width"
+            type="button"
+            disabled={loading}
+            onClick={regenerate}
+          >
+            {loading && <Spinner />}
+            {loading ? 'Generating…' : 'Regenerate code'}
+          </button>
         </div>
       )}
     </Modal>

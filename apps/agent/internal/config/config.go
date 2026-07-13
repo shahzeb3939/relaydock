@@ -168,39 +168,11 @@ func Load(path string) (Config, error) {
 }
 
 func Save(path string, cfg Config) error {
-	if err := cfg.Validate(); err != nil {
+	temporaryPath, cleanup, err := prepareConfigFile(path, cfg)
+	if err != nil {
 		return err
 	}
-	directory := filepath.Dir(path)
-	if err := os.MkdirAll(directory, 0o700); err != nil {
-		return fmt.Errorf("create configuration directory: %w", err)
-	}
-
-	temporary, err := os.CreateTemp(directory, ".agent.json-*")
-	if err != nil {
-		return fmt.Errorf("create temporary configuration: %w", err)
-	}
-	temporaryPath := temporary.Name()
-	cleanup := func() {
-		_ = temporary.Close()
-		_ = os.Remove(temporaryPath)
-	}
 	defer cleanup()
-
-	if err := temporary.Chmod(0o600); err != nil {
-		return fmt.Errorf("secure temporary configuration: %w", err)
-	}
-	encoder := json.NewEncoder(temporary)
-	encoder.SetIndent("", "  ")
-	if err := encoder.Encode(cfg); err != nil {
-		return fmt.Errorf("encode agent configuration: %w", err)
-	}
-	if err := temporary.Sync(); err != nil {
-		return fmt.Errorf("sync agent configuration: %w", err)
-	}
-	if err := temporary.Close(); err != nil {
-		return fmt.Errorf("close agent configuration: %w", err)
-	}
 	if err := os.Rename(temporaryPath, path); err != nil {
 		return fmt.Errorf("install agent configuration: %w", err)
 	}
@@ -210,6 +182,61 @@ func Save(path string, cfg Config) error {
 		}
 	}
 	return nil
+}
+
+// SaveNew installs a configuration atomically and refuses to replace any
+// existing filesystem entry at path. Pairing uses it so concurrent installer
+// runs cannot overwrite an already-issued device credential.
+func SaveNew(path string, cfg Config) error {
+	temporaryPath, cleanup, err := prepareConfigFile(path, cfg)
+	if err != nil {
+		return err
+	}
+	defer cleanup()
+	if err := os.Link(temporaryPath, path); err != nil {
+		return fmt.Errorf("install new agent configuration: %w", err)
+	}
+	return nil
+}
+
+func prepareConfigFile(path string, cfg Config) (string, func(), error) {
+	if err := cfg.Validate(); err != nil {
+		return "", func() {}, err
+	}
+	directory := filepath.Dir(path)
+	if err := os.MkdirAll(directory, 0o700); err != nil {
+		return "", func() {}, fmt.Errorf("create configuration directory: %w", err)
+	}
+
+	temporary, err := os.CreateTemp(directory, ".agent.json-*")
+	if err != nil {
+		return "", func() {}, fmt.Errorf("create temporary configuration: %w", err)
+	}
+	temporaryPath := temporary.Name()
+	cleanup := func() {
+		_ = temporary.Close()
+		_ = os.Remove(temporaryPath)
+	}
+
+	if err := temporary.Chmod(0o600); err != nil {
+		cleanup()
+		return "", func() {}, fmt.Errorf("secure temporary configuration: %w", err)
+	}
+	encoder := json.NewEncoder(temporary)
+	encoder.SetIndent("", "  ")
+	if err := encoder.Encode(cfg); err != nil {
+		cleanup()
+		return "", func() {}, fmt.Errorf("encode agent configuration: %w", err)
+	}
+	if err := temporary.Sync(); err != nil {
+		cleanup()
+		return "", func() {}, fmt.Errorf("sync agent configuration: %w", err)
+	}
+	if err := temporary.Close(); err != nil {
+		cleanup()
+		return "", func() {}, fmt.Errorf("close agent configuration: %w", err)
+	}
+	return temporaryPath, cleanup, nil
 }
 
 func (c Config) Validate() error {

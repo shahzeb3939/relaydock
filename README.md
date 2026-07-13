@@ -55,19 +55,17 @@ Open `http://localhost:5173`, register the initial account, and keep the server 
 
 ## Pair an agent
 
-In the web app, choose **Add device** and generate a short-lived pairing code. On the laptop:
+In the web app, choose **Add device**, generate a short-lived pairing code, and copy the command it shows. On macOS or Linux it has this form:
 
 ```bash
-cd apps/agent
-go run . pair \
-  --server http://localhost:3000 \
-  --code ABCD-EFGH \
-  --name "MacBook Pro"
-
-go run . run
+curl -fsSL http://localhost:5173/install-agent.sh | sh -s -- \
+  --server http://localhost:5173 \
+  --code ABCD-EFGH
 ```
 
-The raw credential is written to `~/.config/relaydock/agent.json` with mode `0600`. Production pairing must use an `https://` server URL. See [agent installation](docs/agent-installation.md) for background services.
+The command downloads the correct prebuilt agent, verifies its SHA-256 checksum, pairs it once, and installs it as a background user service. Go, Homebrew, and administrator access are not required. The raw credential is written to `~/.config/relaydock/agent.json` with mode `0600` and is reused after terminal, network, and laptop restarts. Pair again only after revoking the device, removing its local configuration, or intentionally moving it to another server.
+
+Production installation requires an `https://` server URL. The laptop must still be powered on, connected, and logged in for RelayDock to execute commands. See [agent installation](docs/agent-installation.md) for service status, logs, manual builds, and Linux linger behavior.
 
 ## Register a repository and run an action
 

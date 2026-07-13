@@ -14,11 +14,12 @@ import (
 
 	"github.com/relaydock/relaydock/apps/agent/internal/client"
 	"github.com/relaydock/relaydock/apps/agent/internal/config"
+	"github.com/relaydock/relaydock/apps/agent/internal/installer"
 	"github.com/relaydock/relaydock/apps/agent/internal/repository"
 	"github.com/relaydock/relaydock/apps/agent/internal/session"
 )
 
-const agentVersion = "0.1.0"
+var agentVersion = "0.1.0"
 
 func main() {
 	if err := run(os.Args[1:]); err != nil {
@@ -34,6 +35,8 @@ func run(arguments []string) error {
 	switch arguments[0] {
 	case "pair":
 		return runPair(arguments[1:])
+	case "install":
+		return runInstall(arguments[1:])
 	case "run":
 		return runAgent(arguments[1:])
 	case "version", "--version", "-version":
@@ -49,6 +52,45 @@ func run(arguments []string) error {
 		printUsage()
 		return fmt.Errorf("unknown command %q", arguments[0])
 	}
+}
+
+func runInstall(arguments []string) error {
+	flags := flag.NewFlagSet("install", flag.ContinueOnError)
+	flags.SetOutput(os.Stderr)
+	server := flags.String("server", "", "RelayDock server URL")
+	code := flags.String("code", "", "one-time pairing code (required only when not already paired)")
+	name := flags.String("name", defaultDeviceName(), "device name shown in RelayDock")
+	configPath := flags.String("config", "", "agent configuration path")
+	if err := flags.Parse(arguments); err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			return nil
+		}
+		return err
+	}
+	if flags.NArg() != 0 {
+		return errors.New("install does not accept positional arguments")
+	}
+	path, err := resolveConfigPath(*configPath)
+	if err != nil {
+		return err
+	}
+	result, err := installer.Install(context.Background(), installer.Options{
+		Server:       *server,
+		Code:         *code,
+		Name:         *name,
+		ConfigPath:   path,
+		AgentVersion: agentVersion,
+	})
+	if err != nil {
+		return err
+	}
+	if result.AlreadyPaired {
+		fmt.Printf("Device is already paired as %q. Existing credential preserved at %s.\n", result.DeviceName, result.ConfigPath)
+	} else {
+		fmt.Printf("Paired device %q. Configuration saved to %s.\n", result.DeviceName, result.ConfigPath)
+	}
+	fmt.Printf("Installed RelayDock agent to %s and started its background service.\n", result.BinaryPath)
+	return nil
 }
 
 func runPair(arguments []string) error {
@@ -166,6 +208,7 @@ func printUsage() {
 	fmt.Print(`RelayDock laptop agent
 
 Usage:
+  relaydock-agent install --server URL [--code CODE] [--name NAME]
   relaydock-agent pair --server URL --code CODE [--name NAME]
   relaydock-agent run [--config PATH]
   relaydock-agent [--config PATH]
