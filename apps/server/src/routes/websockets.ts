@@ -130,6 +130,19 @@ export function registerWebSocketRoutes(
         throw new AppError(403, 'JOB_FORBIDDEN', 'Job does not belong to this device.');
     };
 
+    const updateConnectedDevice = async (
+      data: Parameters<typeof database.device.updateMany>[0]['data'],
+    ): Promise<void> => {
+      const updated = await database.device.updateMany({
+        where: { id: authenticated.deviceId, status: { not: 'revoked' } },
+        data,
+      });
+      if (updated.count === 0) {
+        socket.close(4003, 'device revoked');
+        throw new AppError(401, 'AGENT_CREDENTIAL_INVALID', 'The device credential is invalid.');
+      }
+    };
+
     const processMessage = async (message: AgentToServerMessage): Promise<void> => {
       if (!helloReceived && message.type !== 'agent.hello') {
         throw new AppError(400, 'HELLO_REQUIRED', 'agent.hello must be the first message.');
@@ -147,16 +160,13 @@ export function registerWebSocketRoutes(
           helloReceived = true;
           clearTimeout(helloTimeout);
           const now = new Date();
-          await database.device.update({
-            where: { id: authenticated.deviceId },
-            data: {
-              name: message.payload.name,
-              platform: message.payload.platform,
-              architecture: message.payload.architecture,
-              agentVersion: message.payload.agentVersion,
-              status: 'online',
-              lastSeenAt: now,
-            },
+          await updateConnectedDevice({
+            name: message.payload.name,
+            platform: message.payload.platform,
+            architecture: message.payload.architecture,
+            agentVersion: message.payload.agentVersion,
+            status: 'online',
+            lastSeenAt: now,
           });
           const welcome: ServerToAgentMessage = createMessage('agent.welcome', {
             deviceId: authenticated.deviceId,
@@ -203,10 +213,7 @@ export function registerWebSocketRoutes(
             throw new AppError(403, 'DEVICE_FORBIDDEN', 'Heartbeat identity mismatch.');
           }
           if (!(await connections.heartbeat(authenticated.deviceId, socket))) return;
-          await database.device.update({
-            where: { id: authenticated.deviceId },
-            data: { status: 'online', lastSeenAt: new Date() },
-          });
+          await updateConnectedDevice({ status: 'online', lastSeenAt: new Date() });
           return;
         }
         case 'agent.status': {
@@ -214,10 +221,7 @@ export function registerWebSocketRoutes(
             throw new AppError(403, 'DEVICE_FORBIDDEN', 'Status identity mismatch.');
           }
           const now = new Date();
-          await database.device.update({
-            where: { id: authenticated.deviceId },
-            data: { status: message.payload.status, lastSeenAt: now },
-          });
+          await updateConnectedDevice({ status: message.payload.status, lastSeenAt: now });
           const statusMessage: ServerToClientMessage = createMessage('device.status', {
             deviceId: authenticated.deviceId,
             status: message.payload.status,
@@ -353,8 +357,8 @@ export function registerWebSocketRoutes(
         await validations.cancelForDevice(authenticated.deviceId);
         const now = disconnectedAt;
         const device = await database.device.findUnique({ where: { id: authenticated.deviceId } });
-        if (device?.status !== 'revoked') {
-          await database.device.updateMany({
+        if (device !== null && device.status !== 'revoked') {
+          const updated = await database.device.updateMany({
             where: {
               id: authenticated.deviceId,
               updatedAt: { lte: disconnectedAt },
@@ -362,7 +366,7 @@ export function registerWebSocketRoutes(
             },
             data: { status: 'offline', lastSeenAt: now },
           });
-          if (!(await connections.isAgentOnline(authenticated.deviceId))) {
+          if (updated.count === 1 && !(await connections.isAgentOnline(authenticated.deviceId))) {
             const status: ServerToClientMessage = createMessage('device.status', {
               deviceId: authenticated.deviceId,
               status: 'offline',

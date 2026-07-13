@@ -39,6 +39,7 @@ Interactive PTY input, resize, cancellation, and agent-side reconnect buffering 
 - [x] Add Argon2id password authentication and secure database sessions.
 - [x] Add CSRF/origin protection and login rate limiting.
 - [x] Add pairing codes, hashed device credentials, revocation, and audit events.
+- [x] Allow revoked devices and their operational data to be permanently deleted.
 - [x] Add authenticated outbound agent WebSocket, heartbeat, and online state.
 
 ### Repositories, actions, and jobs

@@ -27,7 +27,7 @@ The browser never connects to the laptop. Fastify authorizes and relays requests
 ## Features
 
 - Email/password sign-in with Argon2id and HttpOnly database sessions
-- One-time device pairing and revocable hashed agent credentials
+- One-time device pairing, revocable hashed agent credentials, and permanent post-revocation removal
 - Outbound-only agent connection with heartbeat and automatic reconnect
 - Agent-validated repository registration
 - Safer predefined actions and opt-in confirmed custom commands

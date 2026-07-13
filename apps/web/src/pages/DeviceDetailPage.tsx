@@ -3,6 +3,8 @@ import { useState, type FormEvent } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { api } from '../api/client';
 import { queryKeys } from '../api/queryKeys';
+import type { Device } from '../api/types';
+import { DeleteDeviceModal } from '../components/DeleteDeviceModal';
 import { ErrorState, InlineAlert, PageLoader, Spinner, StatusBadge } from '../components/Feedback';
 import { JobList } from '../components/JobList';
 import { Modal } from '../components/Modal';
@@ -151,6 +153,7 @@ export function DeviceDetailPage() {
   const navigate = useNavigate();
   const [repositoryFormOpen, setRepositoryFormOpen] = useState(false);
   const [revokeOpen, setRevokeOpen] = useState(false);
+  const [deleteOpen, setDeleteOpen] = useState(false);
   const deviceQuery = useQuery({
     queryKey: queryKeys.device(deviceId),
     queryFn: () => api.device(deviceId),
@@ -162,6 +165,19 @@ export function DeviceDetailPage() {
     onSuccess: async () => {
       await queryClient.invalidateQueries({ queryKey: queryKeys.devices });
       navigate('/devices', { replace: true });
+    },
+  });
+  const deleteMutation = useMutation({
+    mutationFn: () => api.deleteDevice(deviceId),
+    onSuccess: async () => {
+      navigate('/devices', { replace: true });
+      queryClient.setQueryData<Device[]>(queryKeys.devices, (devices) =>
+        devices?.filter((device) => device.id !== deviceId),
+      );
+      queryClient.removeQueries({ queryKey: queryKeys.device(deviceId), exact: true });
+      queryClient.removeQueries({ queryKey: queryKeys.allRepositories });
+      queryClient.removeQueries({ queryKey: queryKeys.allJobs });
+      await queryClient.invalidateQueries({ queryKey: queryKeys.devices, exact: true });
     },
   });
 
@@ -199,20 +215,41 @@ export function DeviceDetailPage() {
             {device.platform} · {device.architecture} · Agent v{device.agentVersion}
           </p>
         </div>
-        <button
-          className="button quiet danger-text detail-revoke"
-          type="button"
-          onClick={() => setRevokeOpen(true)}
-        >
-          Revoke device
-        </button>
+        {device.status === 'revoked' ? (
+          <button
+            className="button quiet danger-text detail-device-action"
+            type="button"
+            onClick={() => {
+              if (deleteMutation.isPending) return;
+              deleteMutation.reset();
+              setDeleteOpen(true);
+            }}
+          >
+            Delete device
+          </button>
+        ) : (
+          <button
+            className="button quiet danger-text detail-device-action"
+            type="button"
+            onClick={() => setRevokeOpen(true)}
+          >
+            Revoke device
+          </button>
+        )}
       </header>
 
-      {device.status !== 'online' && (
+      {device.status === 'revoked' ? (
         <InlineAlert tone="warning">
-          This device was last seen {formatRelativeTime(device.lastSeenAt)}. Connect its agent
-          before registering repositories or starting jobs.
+          This device has been revoked and can no longer reconnect. You can review its retained data
+          or permanently delete it.
         </InlineAlert>
+      ) : (
+        device.status !== 'online' && (
+          <InlineAlert tone="warning">
+            This device was last seen {formatRelativeTime(device.lastSeenAt)}. Connect its agent
+            before registering repositories or starting jobs.
+          </InlineAlert>
+        )
       )}
 
       <section className="section-block">
@@ -358,6 +395,18 @@ export function DeviceDetailPage() {
             </button>
           </div>
         </Modal>
+      )}
+      {deleteOpen && (
+        <DeleteDeviceModal
+          deviceName={device.name}
+          error={deleteMutation.isError ? errorMessage(deleteMutation.error) : null}
+          loading={deleteMutation.isPending}
+          onClose={() => {
+            setDeleteOpen(false);
+            if (!deleteMutation.isPending) deleteMutation.reset();
+          }}
+          onConfirm={() => deleteMutation.mutate()}
+        />
       )}
     </div>
   );

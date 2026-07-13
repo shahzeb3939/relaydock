@@ -3,6 +3,8 @@ import type { FastifyRequest } from 'fastify';
 
 import type { DatabaseClient } from '../prisma.js';
 
+type AuditDatabase = Pick<DatabaseClient, 'auditEvent'>;
+
 export interface AuditInput {
   action: string;
   userId?: string;
@@ -13,7 +15,11 @@ export interface AuditInput {
 export class AuditService {
   constructor(private readonly database: DatabaseClient) {}
 
-  async record(request: FastifyRequest, input: AuditInput): Promise<void> {
+  async record(
+    request: FastifyRequest,
+    input: AuditInput,
+    database: AuditDatabase = this.database,
+  ): Promise<void> {
     const data: Prisma.AuditEventUncheckedCreateInput = {
       action: input.action,
       ipAddress: request.ip.slice(0, 100),
@@ -24,7 +30,7 @@ export class AuditService {
       ...(input.deviceId === undefined ? {} : { deviceId: input.deviceId }),
       ...(input.metadata === undefined ? {} : { metadata: input.metadata }),
     };
-    await this.database.auditEvent.create({
+    await database.auditEvent.create({
       data,
     });
   }

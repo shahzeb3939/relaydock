@@ -79,6 +79,19 @@ describe('API client', () => {
     });
   });
 
+  it('permanently deletes a revoked device through the dedicated endpoint', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response(null, { status: 204 }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    await expect(api.deleteDevice('device/with space')).resolves.toBeUndefined();
+
+    const call = fetchMock.mock.calls[0] as [string, RequestInit];
+    const headers = new Headers(call[1].headers);
+    expect(call[0]).toBe('/api/devices/device%2Fwith%20space/permanent');
+    expect(call[1].method).toBe('DELETE');
+    expect(headers.get('x-csrf-token')).toBe('csrf-token');
+  });
+
   it('paginates retained terminal output by sequence', async () => {
     const firstPage = Array.from({ length: 1_000 }, (_, sequence) => ({
       sequence,

@@ -1,13 +1,26 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import type { ComponentProps } from 'react';
+import { MemoryRouter } from 'react-router-dom';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import type { PairingCode } from '../api/types';
+import type { Device, PairingCode } from '../api/types';
 import { buildAgentInstallCommand } from '../lib/agentInstall';
-import { PairDeviceModal } from './DevicesPage';
+import { DeviceCard, PairDeviceModal } from './DevicesPage';
 
 const pairing: PairingCode = {
   code: 'ABCD-EFGH',
   expiresAt: '2099-07-13T12:00:00.000Z',
+};
+
+const pairedDevice: Device = {
+  id: '33d58cdf-2dd8-4805-a0c2-b08744947c22',
+  name: 'Development laptop',
+  platform: 'darwin',
+  architecture: 'arm64',
+  agentVersion: '0.1.0',
+  status: 'offline',
+  lastSeenAt: '2026-07-13T08:00:00.000Z',
+  createdAt: '2026-07-12T08:00:00.000Z',
+  updatedAt: '2026-07-13T08:00:00.000Z',
 };
 
 function renderModal(overrides: Partial<ComponentProps<typeof PairDeviceModal>> = {}) {
@@ -80,5 +93,40 @@ describe('PairDeviceModal', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Regenerate code' }));
 
     expect(props.onGenerate).toHaveBeenCalledOnce();
+  });
+});
+
+describe('DeviceCard', () => {
+  it('offers revocation while a device is active', () => {
+    const onRevoke = vi.fn();
+    render(
+      <MemoryRouter>
+        <DeviceCard device={pairedDevice} onRevoke={onRevoke} onDelete={vi.fn()} />
+      </MemoryRouter>,
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: 'Revoke Development laptop' }));
+
+    expect(onRevoke).toHaveBeenCalledWith(pairedDevice);
+    expect(
+      screen.queryByRole('button', { name: 'Permanently delete Development laptop' }),
+    ).not.toBeInTheDocument();
+  });
+
+  it('offers permanent deletion only after revocation', () => {
+    const revokedDevice = { ...pairedDevice, status: 'revoked' as const };
+    const onDelete = vi.fn();
+    render(
+      <MemoryRouter>
+        <DeviceCard device={revokedDevice} onRevoke={vi.fn()} onDelete={onDelete} />
+      </MemoryRouter>,
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: 'Permanently delete Development laptop' }));
+
+    expect(onDelete).toHaveBeenCalledWith(revokedDevice);
+    expect(
+      screen.queryByRole('button', { name: 'Revoke Development laptop' }),
+    ).not.toBeInTheDocument();
   });
 });

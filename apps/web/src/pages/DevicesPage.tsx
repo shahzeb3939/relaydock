@@ -4,6 +4,7 @@ import { Link } from 'react-router-dom';
 import { api } from '../api/client';
 import { queryKeys } from '../api/queryKeys';
 import type { Device, PairingCode } from '../api/types';
+import { DeleteDeviceModal } from '../components/DeleteDeviceModal';
 import {
   EmptyState,
   ErrorState,
@@ -16,7 +17,15 @@ import { Modal } from '../components/Modal';
 import { errorMessage, formatRelativeTime } from '../lib';
 import { buildAgentInstallCommand } from '../lib/agentInstall';
 
-function DeviceCard({ device, onRevoke }: { device: Device; onRevoke: (device: Device) => void }) {
+export function DeviceCard({
+  device,
+  onRevoke,
+  onDelete,
+}: {
+  device: Device;
+  onRevoke: (device: Device) => void;
+  onDelete: (device: Device) => void;
+}) {
   return (
     <article className="device-card">
       <div className="device-card-top">
@@ -52,9 +61,25 @@ function DeviceCard({ device, onRevoke }: { device: Device; onRevoke: (device: D
         <Link className="button secondary" to={`/devices/${device.id}`}>
           Open device <span aria-hidden="true">→</span>
         </Link>
-        <button className="button quiet danger-text" type="button" onClick={() => onRevoke(device)}>
-          Revoke
-        </button>
+        {device.status === 'revoked' ? (
+          <button
+            className="button quiet danger-text"
+            type="button"
+            aria-label={`Permanently delete ${device.name}`}
+            onClick={() => onDelete(device)}
+          >
+            Delete
+          </button>
+        ) : (
+          <button
+            className="button quiet danger-text"
+            type="button"
+            aria-label={`Revoke ${device.name}`}
+            onClick={() => onRevoke(device)}
+          >
+            Revoke
+          </button>
+        )}
       </div>
     </article>
   );
@@ -180,6 +205,7 @@ export function DevicesPage() {
   const [pairingOpen, setPairingOpen] = useState(false);
   const [pairing, setPairing] = useState<PairingCode | null>(null);
   const [revokeTarget, setRevokeTarget] = useState<Device | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<Device | null>(null);
   const devicesQuery = useQuery({
     queryKey: queryKeys.devices,
     queryFn: api.devices,
@@ -193,6 +219,28 @@ export function DevicesPage() {
       await queryClient.invalidateQueries({ queryKey: queryKeys.devices });
     },
   });
+  const deleteMutation = useMutation({
+    mutationFn: api.deleteDevice,
+    onSuccess: async (_result, deletedDeviceId) => {
+      setDeleteTarget(null);
+      queryClient.setQueryData<Device[]>(queryKeys.devices, (devices) =>
+        devices?.filter((device) => device.id !== deletedDeviceId),
+      );
+      queryClient.removeQueries({ queryKey: queryKeys.device(deletedDeviceId), exact: true });
+      queryClient.removeQueries({ queryKey: queryKeys.allRepositories });
+      queryClient.removeQueries({ queryKey: queryKeys.allJobs });
+      await queryClient.invalidateQueries({ queryKey: queryKeys.devices, exact: true });
+    },
+  });
+  const openDelete = (device: Device) => {
+    if (deleteMutation.isPending) return;
+    deleteMutation.reset();
+    setDeleteTarget(device);
+  };
+  const closeDelete = () => {
+    setDeleteTarget(null);
+    if (!deleteMutation.isPending) deleteMutation.reset();
+  };
   const closePairing = useCallback(() => {
     setPairingOpen(false);
     setPairing(null);
@@ -243,7 +291,12 @@ export function DevicesPage() {
       ) : (
         <div className="device-grid">
           {devices.map((device) => (
-            <DeviceCard key={device.id} device={device} onRevoke={setRevokeTarget} />
+            <DeviceCard
+              key={device.id}
+              device={device}
+              onRevoke={setRevokeTarget}
+              onDelete={openDelete}
+            />
           ))}
         </div>
       )}
@@ -289,6 +342,16 @@ export function DevicesPage() {
             </button>
           </div>
         </Modal>
+      )}
+
+      {deleteTarget && (
+        <DeleteDeviceModal
+          deviceName={deleteTarget.name}
+          error={deleteMutation.isError ? errorMessage(deleteMutation.error) : null}
+          loading={deleteMutation.isPending}
+          onClose={closeDelete}
+          onConfirm={() => deleteMutation.mutate(deleteTarget.id)}
+        />
       )}
     </div>
   );

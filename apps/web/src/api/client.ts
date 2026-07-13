@@ -134,6 +134,11 @@ export const api = {
   revokeDevice(deviceId: string) {
     return request<void>(`/devices/${encodeURIComponent(deviceId)}`, { method: 'DELETE' });
   },
+  deleteDevice(deviceId: string) {
+    return request<void>(`/devices/${encodeURIComponent(deviceId)}/permanent`, {
+      method: 'DELETE',
+    });
+  },
   async repositories(deviceId: string) {
     return (
       await request<{ repositories: Repository[] }>(

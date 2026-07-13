@@ -56,5 +56,8 @@ Repository creation is a validation handshake, not a blind database insert. The 
 - Cancellation/completion race: terminal states are final and state transitions are checked before mutation.
 - Browser disconnect: no process action occurs.
 - Device revocation: the active socket is closed and future credential verification fails.
+- Permanent device deletion: only revoked devices can be deleted. RelayDock transactionally removes
+  their jobs and retained output, repositories and actions, credentials, and device record while
+  retaining security audit events with the former device identity in metadata.
 
 Material changes to these boundaries require an ADR under `docs/decisions`.

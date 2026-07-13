@@ -190,20 +190,30 @@ export function registerDeviceRoutes(
           );
         }
       }
-      await database.$transaction([
-        database.device.update({ where: { id: deviceId }, data: { status: 'revoked' } }),
-        database.deviceCredential.updateMany({
+      await database.$transaction(async (transaction) => {
+        await transaction.device.update({ where: { id: deviceId }, data: { status: 'revoked' } });
+        await transaction.deviceCredential.updateMany({
           where: { deviceId, revokedAt: null },
           data: { revokedAt: new Date() },
-        }),
-        database.job.updateMany({
+        });
+        await transaction.job.updateMany({
           where: {
             deviceId,
             status: { in: ['queued', 'dispatched', 'running', 'waiting_for_input'] },
           },
           data: { status: 'disconnected', statusDetail: 'Device was revoked.' },
-        }),
-      ]);
+        });
+        await audit.record(
+          request,
+          {
+            action: 'device.revoked',
+            userId: ownerId,
+            deviceId,
+            metadata: { deviceId, deviceName: device.name },
+          },
+          transaction,
+        );
+      });
       const now = new Date();
       const revoked: ServerToClientMessage = createMessage('device.status', {
         deviceId,
@@ -228,7 +238,59 @@ export function registerDeviceRoutes(
           request.log.warn({ err: result.reason, deviceId }, 'device revocation follow-up failed');
         }
       }
-      await audit.record(request, { action: 'device.revoked', userId: ownerId, deviceId });
+      return reply.status(204).send();
+    },
+  );
+
+  app.delete(
+    '/api/devices/:deviceId/permanent',
+    { preHandler: [requireAuth, requireCsrf] },
+    async (request, reply) => {
+      const { deviceId } = idParametersSchema.parse(request.params);
+      const ownerId = userId(request);
+      await database.$transaction(async (transaction) => {
+        // Referencing inserts take a key-share lock in PostgreSQL. Locking the parent first makes
+        // concurrent job/repository creation finish before this purge or fail after the device is
+        // gone, rather than slipping between the child deletes and the restricted parent delete.
+        const [device] = await transaction.$queryRaw<
+          Array<{ id: string; name: string; status: 'online' | 'offline' | 'revoked' }>
+        >`SELECT "id", "name", "status"::text AS "status"
+          FROM "Device"
+          WHERE "id" = ${deviceId}::uuid AND "userId" = ${ownerId}::uuid
+          FOR UPDATE`;
+        if (device === undefined) throw new AppError(404, 'DEVICE_NOT_FOUND', 'Device not found.');
+        if (device.status !== 'revoked') {
+          throw new AppError(
+            409,
+            'DEVICE_NOT_REVOKED',
+            'Revoke the device before deleting it permanently.',
+          );
+        }
+
+        await transaction.job.deleteMany({ where: { deviceId } });
+        await transaction.repository.deleteMany({ where: { deviceId } });
+        await transaction.device.delete({ where: { id: deviceId } });
+        await audit.record(
+          request,
+          {
+            action: 'device.deleted',
+            userId: ownerId,
+            metadata: { deviceId, deviceName: device.name },
+          },
+          transaction,
+        );
+      });
+
+      const cleanupResults = await Promise.allSettled([
+        connections.closeDevice(deviceId, 'device deleted'),
+        validations.cancelForDevice(deviceId),
+      ]);
+      for (const result of cleanupResults) {
+        if (result.status === 'rejected') {
+          request.log.warn({ err: result.reason, deviceId }, 'device deletion follow-up failed');
+        }
+      }
+
       return reply.status(204).send();
     },
   );
