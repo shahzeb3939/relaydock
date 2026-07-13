@@ -1,5 +1,6 @@
 import type {
   Action,
+  AuthConfig,
   CreateActionInput,
   CreateRepositoryInput,
   Device,
@@ -121,6 +122,9 @@ export const api = {
   },
   logout() {
     return request<void>('/auth/logout', { method: 'POST' });
+  },
+  authConfig() {
+    return request<AuthConfig>('/auth/config');
   },
   async devices() {
     return (await request<{ devices: Device[] }>('/devices')).devices;

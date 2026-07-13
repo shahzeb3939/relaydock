@@ -3,8 +3,19 @@ import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { z } from 'zod';
 
 import type { ServerEnvironment } from '../env.js';
-import { hashPassword, verifyPassword } from '../lib/crypto.js';
+import {
+  constantTimeEqual,
+  createOpaqueToken,
+  hashPassword,
+  verifyPassword,
+} from '../lib/crypto.js';
 import { AppError } from '../lib/errors.js';
+import {
+  buildGoogleAuthorizationUrl,
+  exchangeCodeForIdToken,
+  parseGoogleIdToken,
+  resolveGoogleAccount,
+} from '../lib/google-oauth.js';
 import { serializeUser } from '../lib/serializers.js';
 import type { DatabaseClient } from '../prisma.js';
 import type { AuditService } from '../services/audit.js';
@@ -100,4 +111,107 @@ export function registerAuthRoutes(
       return reply.status(204).send();
     },
   );
+
+  // Lets the web client discover which sign-in methods are available without
+  // authenticating, so it can show the Google button only when it is configured.
+  app.get('/api/auth/config', { config: { rateLimit: false } }, async () => ({
+    google: environment.googleEnabled,
+    allowRegistration: environment.ALLOW_REGISTRATION,
+  }));
+
+  if (environment.googleEnabled) {
+    // Presence of both values is guaranteed by googleEnabled; PUBLIC_URL is
+    // required alongside them by env validation.
+    const clientId = environment.GOOGLE_CLIENT_ID as string;
+    const clientSecret = environment.GOOGLE_CLIENT_SECRET as string;
+    const redirectUri = `${environment.PUBLIC_URL as string}/api/auth/google/callback`;
+    const allowedEmailDomains = environment.GOOGLE_ALLOWED_EMAIL_DOMAINS ?? [];
+    const hostedDomainHint = allowedEmailDomains.length === 1 ? allowedEmailDomains[0] : undefined;
+    const stateCookie = 'relaydock_oauth_state';
+    const stateCookieOptions = {
+      path: '/api/auth/google',
+      httpOnly: true,
+      secure: environment.cookieSecure,
+      sameSite: 'lax' as const,
+    };
+
+    app.get(
+      '/api/auth/google',
+      { config: { rateLimit: { max: 20, timeWindow: '1 minute' } } },
+      async (_request, reply) => {
+        const state = createOpaqueToken('oauth');
+        reply.setCookie(stateCookie, state, { ...stateCookieOptions, maxAge: 600 });
+        return reply.redirect(
+          buildGoogleAuthorizationUrl({
+            clientId,
+            redirectUri,
+            state,
+            ...(hostedDomainHint === undefined ? {} : { hostedDomainHint }),
+          }),
+        );
+      },
+    );
+
+    app.get(
+      '/api/auth/google/callback',
+      { config: { rateLimit: { max: 20, timeWindow: '1 minute' } } },
+      async (request, reply) => {
+        const query = request.query as Record<string, unknown>;
+        const code = typeof query.code === 'string' ? query.code : '';
+        const state = typeof query.state === 'string' ? query.state : '';
+        const cookieState = request.cookies[stateCookie];
+        reply.clearCookie(stateCookie, stateCookieOptions);
+
+        const auditFailure = (reason: string) =>
+          audit.record(request, { action: 'auth.oauth_failed', metadata: { reason } });
+
+        if (typeof query.error === 'string' && query.error !== '') {
+          await auditFailure(`provider:${query.error.slice(0, 60)}`);
+          return reply.redirect('/login?error=google_cancelled');
+        }
+        if (
+          code === '' ||
+          state === '' ||
+          cookieState === undefined ||
+          !constantTimeEqual(state, cookieState)
+        ) {
+          await auditFailure('state_mismatch');
+          return reply.redirect('/login?error=google');
+        }
+
+        try {
+          const idToken = await exchangeCodeForIdToken({
+            code,
+            clientId,
+            clientSecret,
+            redirectUri,
+          });
+          const profile = parseGoogleIdToken(idToken, clientId, Date.now());
+          const { user, created } = await resolveGoogleAccount(database, profile, {
+            allowedEmailDomains,
+          });
+          await sessions.create(user.id, reply);
+          await audit.record(request, {
+            action: created ? 'auth.oauth_register' : 'auth.oauth_login',
+            userId: user.id,
+          });
+          return reply.redirect('/devices');
+        } catch (error) {
+          const uiCode =
+            error instanceof AppError ? (googleErrorCodes[error.code] ?? 'google') : 'google';
+          await auditFailure(error instanceof AppError ? error.code : 'exception');
+          request.log.warn({ err: error }, 'google sign-in failed');
+          return reply.redirect(`/login?error=${uiCode}`);
+        }
+      },
+    );
+  }
 }
+
+// Maps internal sign-in error codes to the compact codes the web login page
+// understands, keeping raw internal codes out of the browser URL.
+const googleErrorCodes: Record<string, string> = {
+  EMAIL_DOMAIN_NOT_ALLOWED: 'google_domain',
+  GOOGLE_EMAIL_UNVERIFIED: 'google_unverified',
+  ACCOUNT_LINK_CONFLICT: 'google_conflict',
+};

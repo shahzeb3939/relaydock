@@ -1,5 +1,6 @@
 export const queryKeys = {
   session: ['session'] as const,
+  authConfig: ['auth-config'] as const,
   devices: ['devices'] as const,
   device: (deviceId: string) => ['devices', deviceId] as const,
   allRepositories: ['repositories'] as const,

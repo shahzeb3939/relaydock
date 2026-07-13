@@ -33,6 +33,29 @@ const commaSeparatedOrigins = z.string().transform((value, context) => {
   return origins;
 });
 
+const publicUrl = z
+  .string()
+  .url()
+  .transform((value) => new URL(value).origin);
+
+const commaSeparatedEmailDomains = z.string().transform((value, context) => {
+  const domains = value
+    .split(',')
+    .map((domain) => domain.trim().toLowerCase())
+    .filter((domain) => domain.length > 0);
+
+  for (const domain of domains) {
+    if (!/^[a-z0-9-]+(\.[a-z0-9-]+)+$/.test(domain)) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: `${domain} is not a valid email domain`,
+      });
+    }
+  }
+
+  return domains;
+});
+
 const environmentSchema = z
   .object({
     NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
@@ -98,6 +121,10 @@ const environmentSchema = z
     LOG_LEVEL: z
       .enum(['fatal', 'error', 'warn', 'info', 'debug', 'trace', 'silent'])
       .default('info'),
+    PUBLIC_URL: publicUrl.optional(),
+    GOOGLE_CLIENT_ID: z.string().min(1).optional(),
+    GOOGLE_CLIENT_SECRET: z.string().min(1).optional(),
+    GOOGLE_ALLOWED_EMAIL_DOMAINS: commaSeparatedEmailDomains.optional(),
   })
   .superRefine((environment, context) => {
     if (environment.NODE_ENV === 'production' && environment.ALLOWED_ORIGINS.length === 0) {
@@ -124,10 +151,34 @@ const environmentSchema = z
         message: 'must be distinct from the session pepper in production',
       });
     }
+    if (
+      (environment.GOOGLE_CLIENT_ID === undefined) !==
+      (environment.GOOGLE_CLIENT_SECRET === undefined)
+    ) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['GOOGLE_CLIENT_SECRET'],
+        message:
+          'GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET must both be set to enable Google sign-in',
+      });
+    }
+    if (
+      environment.GOOGLE_CLIENT_ID !== undefined &&
+      environment.GOOGLE_CLIENT_SECRET !== undefined &&
+      environment.PUBLIC_URL === undefined
+    ) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['PUBLIC_URL'],
+        message:
+          'PUBLIC_URL is required when Google sign-in is enabled; it builds the OAuth redirect URI',
+      });
+    }
   });
 
 export interface ServerEnvironment extends z.infer<typeof environmentSchema> {
   cookieSecure: boolean;
+  googleEnabled: boolean;
 }
 
 export function parseServerEnvironment(source: NodeJS.ProcessEnv): ServerEnvironment {
@@ -159,7 +210,17 @@ export function parseServerEnvironment(source: NodeJS.ProcessEnv): ServerEnviron
     REPOSITORY_VALIDATION_TIMEOUT_MS:
       source.RELAYDOCK_REPOSITORY_VALIDATION_TIMEOUT_MS ?? source.REPOSITORY_VALIDATION_TIMEOUT_MS,
     LOG_LEVEL: source.RELAYDOCK_LOG_LEVEL ?? source.LOG_LEVEL,
+    PUBLIC_URL: source.RELAYDOCK_PUBLIC_URL ?? source.PUBLIC_URL,
+    GOOGLE_CLIENT_ID: source.RELAYDOCK_GOOGLE_CLIENT_ID ?? source.GOOGLE_CLIENT_ID,
+    GOOGLE_CLIENT_SECRET: source.RELAYDOCK_GOOGLE_CLIENT_SECRET ?? source.GOOGLE_CLIENT_SECRET,
+    GOOGLE_ALLOWED_EMAIL_DOMAINS:
+      source.RELAYDOCK_GOOGLE_ALLOWED_EMAIL_DOMAINS ?? source.GOOGLE_ALLOWED_EMAIL_DOMAINS,
   };
   const environment = environmentSchema.parse(normalized);
-  return { ...environment, cookieSecure: environment.NODE_ENV === 'production' };
+  return {
+    ...environment,
+    cookieSecure: environment.NODE_ENV === 'production',
+    googleEnabled:
+      environment.GOOGLE_CLIENT_ID !== undefined && environment.GOOGLE_CLIENT_SECRET !== undefined,
+  };
 }

@@ -83,6 +83,12 @@ export async function buildServer(options: BuildServerOptions = {}): Promise<Rel
   });
 
   app.addHook('onRequest', async (request) => {
+    // The Google OAuth callback is a top-level cross-site GET navigation from
+    // the identity provider: it legitimately carries no trusted Origin and
+    // Sec-Fetch-Site: cross-site. Its CSRF defence is the unguessable state
+    // parameter validated in the callback handler, so it is exempt from the
+    // browser-origin guard below.
+    if (request.url.split('?', 1)[0] === '/api/auth/google/callback') return;
     const origin = request.headers.origin;
     if (origin !== undefined && !allowedOrigins.has(origin)) {
       throw new AppError(403, 'ORIGIN_FORBIDDEN', 'This browser origin is not allowed.');
