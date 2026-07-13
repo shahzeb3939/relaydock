@@ -91,7 +91,7 @@ export function registerJobRoutes(app: FastifyInstance, dependencies: JobRouteDe
       if (repository.device.status === 'revoked') {
         throw new AppError(409, 'DEVICE_REVOKED', 'The device has been revoked.');
       }
-      if (!connections.isAgentOnline(repository.deviceId)) {
+      if (!(await connections.isAgentOnline(repository.deviceId))) {
         throw new AppError(409, 'DEVICE_OFFLINE', 'The device must be online to start a job.');
       }
 
@@ -164,7 +164,7 @@ export function registerJobRoutes(app: FastifyInstance, dependencies: JobRouteDe
         columns: 80,
         rows: 24,
       });
-      if (!connections.sendToAgent(repository.deviceId, startMessage)) {
+      if (!(await connections.sendToAgent(repository.deviceId, startMessage))) {
         job = await database.job.update({
           where: { id: job.id },
           data: {

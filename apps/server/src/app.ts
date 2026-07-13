@@ -96,7 +96,13 @@ export async function buildServer(options: BuildServerOptions = {}): Promise<Rel
 
   const sessions = new SessionService(database, environment);
   const audit = new AuditService(database);
-  const connections = new ConnectionHub();
+  const connections = new ConnectionHub({
+    redisUrl: environment.REDIS_URL,
+    namespace: environment.REDIS_NAMESPACE,
+    presenceTtlMs: environment.OFFLINE_AFTER_MS,
+    requestTimeoutMs: environment.RELAY_ACK_TIMEOUT_MS,
+  });
+  await connections.start();
   const validations = new RepositoryValidationBroker(connections, environment);
   const jobs = new JobService(database, connections, environment.MAX_RETAINED_OUTPUT_BYTES);
   const maintenance = new MaintenanceService(database, connections, environment, app.log);
@@ -119,6 +125,20 @@ export async function buildServer(options: BuildServerOptions = {}): Promise<Rel
     } catch {
       return reply.status(503).send({ status: 'not_ready' });
     }
+  });
+  app.get('/api/internal/maintenance', { config: { rateLimit: false } }, async (request) => {
+    if (environment.CRON_SECRET === undefined) {
+      throw new AppError(404, 'NOT_FOUND', 'Not found.');
+    }
+    if (request.headers.authorization !== `Bearer ${environment.CRON_SECRET}`) {
+      throw new AppError(
+        401,
+        'MAINTENANCE_AUTHENTICATION_REQUIRED',
+        'A valid maintenance credential is required.',
+      );
+    }
+    await maintenance.cleanup();
+    return { status: 'ok' };
   });
 
   registerAuthRoutes(app, {
@@ -161,8 +181,8 @@ export async function buildServer(options: BuildServerOptions = {}): Promise<Rel
 
   app.addHook('onClose', async () => {
     maintenance.stop();
-    validations.shutdown();
-    connections.shutdown();
+    await validations.shutdown();
+    await connections.shutdown();
     await database.$disconnect();
   });
 

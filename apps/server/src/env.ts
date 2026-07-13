@@ -3,6 +3,17 @@ import { z } from 'zod';
 
 const booleanFromEnvironment = z.enum(['true', 'false']).transform((value) => value === 'true');
 
+const redisUrl = z
+  .string()
+  .url()
+  .refine(
+    (value) => {
+      const protocol = new URL(value).protocol;
+      return protocol === 'redis:' || protocol === 'rediss:';
+    },
+    { message: 'must use redis:// or rediss://' },
+  );
+
 const commaSeparatedOrigins = z.string().transform((value, context) => {
   const origins = value
     .split(',')
@@ -28,6 +39,15 @@ const environmentSchema = z
     HOST: z.string().min(1).default('0.0.0.0'),
     PORT: z.coerce.number().int().min(1).max(65_535).default(relayDockDefaults.serverPort),
     DATABASE_URL: z.string().min(1),
+    REDIS_URL: redisUrl.optional(),
+    REDIS_NAMESPACE: z
+      .string()
+      .min(1)
+      .max(100)
+      .regex(/^[A-Za-z0-9._-]+$/)
+      .default('relaydock'),
+    RELAY_ACK_TIMEOUT_MS: z.coerce.number().int().min(250).max(10_000).default(2_000),
+    CRON_SECRET: z.string().min(32).optional(),
     SESSION_SECRET: z.string().min(32),
     CREDENTIAL_SECRET: z.string().min(32),
     ALLOWED_ORIGINS: commaSeparatedOrigins.default('http://localhost:5173,http://127.0.0.1:5173'),
@@ -118,6 +138,10 @@ export function parseServerEnvironment(source: NodeJS.ProcessEnv): ServerEnviron
     ...source,
     HOST: source.RELAYDOCK_HOST ?? source.HOST,
     PORT: source.RELAYDOCK_PORT ?? source.PORT,
+    REDIS_URL: source.RELAYDOCK_REDIS_URL ?? source.REDIS_URL ?? source.KV_URL,
+    REDIS_NAMESPACE: source.RELAYDOCK_REDIS_NAMESPACE ?? source.REDIS_NAMESPACE,
+    RELAY_ACK_TIMEOUT_MS: source.RELAYDOCK_RELAY_ACK_TIMEOUT_MS ?? source.RELAY_ACK_TIMEOUT_MS,
+    CRON_SECRET: source.RELAYDOCK_CRON_SECRET ?? source.CRON_SECRET,
     SESSION_SECRET: sessionSecret,
     CREDENTIAL_SECRET: credentialSecret,
     ALLOWED_ORIGINS:

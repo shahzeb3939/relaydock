@@ -16,21 +16,25 @@ export class MaintenanceService {
   ) {}
 
   async start(): Promise<void> {
-    await this.database.device.updateMany({
-      where: { status: 'online' },
-      data: { status: 'offline' },
-    });
+    if (!this.connections.distributed) {
+      await this.database.device.updateMany({
+        where: { status: 'online' },
+        data: { status: 'offline' },
+      });
+    }
     this.heartbeatTimer = setInterval(() => this.expireStaleConnections(), 5_000);
     this.heartbeatTimer.unref();
-    this.cleanupTimer = setInterval(
-      () => {
-        void this.cleanup().catch((error: unknown) =>
-          this.logger.error({ err: error }, 'retention cleanup failed'),
-        );
-      },
-      6 * 60 * 60 * 1000,
-    );
-    this.cleanupTimer.unref();
+    if (!this.connections.distributed) {
+      this.cleanupTimer = setInterval(
+        () => {
+          void this.cleanup().catch((error: unknown) =>
+            this.logger.error({ err: error }, 'retention cleanup failed'),
+          );
+        },
+        6 * 60 * 60 * 1000,
+      );
+      this.cleanupTimer.unref();
+    }
   }
 
   stop(): void {

@@ -143,9 +143,9 @@ export function registerWebSocketRoutes(
               'Agent identity does not match its credential.',
             );
           }
+          await connections.attachAgent(authenticated.deviceId, authenticated.userId, socket);
           helloReceived = true;
           clearTimeout(helloTimeout);
-          connections.attachAgent(authenticated.deviceId, authenticated.userId, socket);
           const now = new Date();
           await database.device.update({
             where: { id: authenticated.deviceId },
@@ -163,13 +163,15 @@ export function registerWebSocketRoutes(
             heartbeatIntervalMs: environment.HEARTBEAT_INTERVAL_MS,
             serverTime: now.toISOString(),
           });
-          connections.sendToAgent(authenticated.deviceId, welcome);
+          if (!(await connections.sendToAgent(authenticated.deviceId, welcome))) {
+            throw new AppError(409, 'DEVICE_DISCONNECTED', 'The agent connection was lost.');
+          }
           const deviceStatus: ServerToClientMessage = createMessage('device.status', {
             deviceId: authenticated.deviceId,
             status: 'online',
             lastSeenAt: now.toISOString(),
           });
-          connections.broadcastDevice(authenticated.userId, deviceStatus);
+          await connections.broadcastDevice(authenticated.userId, deviceStatus);
 
           const runningJobs = await database.job.findMany({
             where: {
@@ -191,7 +193,7 @@ export function registerWebSocketRoutes(
               jobId: job.id,
               afterSequence: await jobs.latestSequence(job.id),
             });
-            connections.sendToAgent(authenticated.deviceId, bufferRequest);
+            await connections.sendToAgent(authenticated.deviceId, bufferRequest);
           }
           request.log.info({ deviceId: authenticated.deviceId }, 'agent connected');
           return;
@@ -200,7 +202,7 @@ export function registerWebSocketRoutes(
           if (message.payload.deviceId !== authenticated.deviceId) {
             throw new AppError(403, 'DEVICE_FORBIDDEN', 'Heartbeat identity mismatch.');
           }
-          connections.heartbeat(authenticated.deviceId, socket);
+          if (!(await connections.heartbeat(authenticated.deviceId, socket))) return;
           await database.device.update({
             where: { id: authenticated.deviceId },
             data: { status: 'online', lastSeenAt: new Date() },
@@ -221,12 +223,12 @@ export function registerWebSocketRoutes(
             status: message.payload.status,
             lastSeenAt: now.toISOString(),
           });
-          connections.broadcastDevice(authenticated.userId, statusMessage);
+          await connections.broadcastDevice(authenticated.userId, statusMessage);
           if (message.payload.status === 'offline') socket.close(1000, 'agent went offline');
           return;
         }
         case 'repository.validation.result':
-          if (!validations.settle(authenticated.deviceId, message.payload)) {
+          if (!(await validations.settle(authenticated.deviceId, message.payload))) {
             request.log.debug(
               { deviceId: authenticated.deviceId, repositoryId: message.payload.repositoryId },
               'ignored unsolicited repository validation',
@@ -273,7 +275,7 @@ export function registerWebSocketRoutes(
               jobId: job.id,
               exitCode: message.payload.exitCode,
             });
-            connections.broadcastJob(job.userId, job.id, completed);
+            await connections.broadcastJob(job.userId, job.id, completed);
           }
           return;
         }
@@ -296,7 +298,7 @@ export function registerWebSocketRoutes(
               error: message.payload.error,
               exitCode: message.payload.exitCode ?? null,
             });
-            connections.broadcastJob(job.userId, job.id, failed);
+            await connections.broadcastJob(job.userId, job.id, failed);
           }
           return;
         }
@@ -344,10 +346,11 @@ export function registerWebSocketRoutes(
 
     socket.on('close', () => {
       clearTimeout(helloTimeout);
-      if (!helloReceived || !connections.detachAgent(authenticated.deviceId, socket)) return;
+      if (!helloReceived) return;
       const disconnectedAt = new Date();
-      validations.cancelForDevice(authenticated.deviceId);
       void (async () => {
+        if (!(await connections.detachAgent(authenticated.deviceId, socket))) return;
+        await validations.cancelForDevice(authenticated.deviceId);
         const now = disconnectedAt;
         const device = await database.device.findUnique({ where: { id: authenticated.deviceId } });
         if (device?.status !== 'revoked') {
@@ -359,13 +362,13 @@ export function registerWebSocketRoutes(
             },
             data: { status: 'offline', lastSeenAt: now },
           });
-          if (!connections.isAgentOnline(authenticated.deviceId)) {
+          if (!(await connections.isAgentOnline(authenticated.deviceId))) {
             const status: ServerToClientMessage = createMessage('device.status', {
               deviceId: authenticated.deviceId,
               status: 'offline',
               lastSeenAt: now.toISOString(),
             });
-            connections.broadcastDevice(authenticated.userId, status);
+            await connections.broadcastDevice(authenticated.userId, status);
           }
         }
         const affectedJobs = await database.job.findMany({
@@ -402,7 +405,7 @@ export function registerWebSocketRoutes(
             status: 'disconnected',
             exitCode: job.exitCode,
           });
-          connections.broadcastJob(job.userId, job.id, status);
+          await connections.broadcastJob(job.userId, job.id, status);
         }
         request.log.info({ deviceId: authenticated.deviceId }, 'agent disconnected');
       })().catch((error: unknown) =>

@@ -2,6 +2,8 @@
 
 RelayDock can run as two application containers plus PostgreSQL. The included Compose profile is a reference deployment, not an automatic cloud installer.
 
+It can also run as a Vercel Services deployment using the root `vercel.json`. That deployment uses a Vite static service, a Fastify Function, managed PostgreSQL, and Redis-backed presence and fan-out.
+
 ## Prepare configuration
 
 ```bash
@@ -17,6 +19,44 @@ docker compose --profile app up -d --build
 ```
 
 The web container listens on host port 8080 by default and proxies `/api` and `/ws` to the server. Put that port behind Caddy, Nginx, or another maintained TLS reverse proxy. `docker/Caddyfile.example` shows the required routing. Preserve WebSocket `Upgrade`/`Connection` headers and use a long read timeout.
+
+## Vercel
+
+Create and link one Vercel project, then provision PostgreSQL and Redis from the Marketplace. The example below keeps both data services in Singapore and disables Upstash's automatic paid-plan upgrade.
+
+```bash
+pnpm dlx vercel@55.0.0 project add relaydock
+pnpm dlx vercel@55.0.0 link --yes --project relaydock
+pnpm dlx vercel@55.0.0 integration add neon \
+  --name relaydock-postgres --plan free_v3 \
+  --metadata region=sin1 --metadata auth=false \
+  --environment production --no-env-pull
+pnpm dlx vercel@55.0.0 integration add upstash/upstash-kv \
+  --name relaydock-redis --plan free \
+  --metadata primaryRegion=sin1 --metadata eviction=false \
+  --metadata prodPack=false --metadata autoUpgrade=false \
+  --environment production --no-env-pull
+```
+
+The integrations inject `DATABASE_URL` and `REDIS_URL`. Add these application variables to Production:
+
+- `NODE_ENV=production`
+- `RELAYDOCK_WEB_ORIGIN=https://<production-domain>`
+- `RELAYDOCK_TRUST_PROXY=true`
+- `RELAYDOCK_REDIS_NAMESPACE=relaydock-production`
+- independent random `RELAYDOCK_SESSION_PEPPER` and `RELAYDOCK_CREDENTIAL_PEPPER` values
+- a random `CRON_SECRET` for Vercel Cron authentication
+- `RELAYDOCK_ALLOW_REGISTRATION=true` only until the first account is created
+
+Apply migrations with Neon's unpooled URL, then deploy the Function in the same region as the data services:
+
+```bash
+pnpm dlx vercel@55.0.0 env run --environment production -- \
+  sh -c 'DATABASE_URL="$DATABASE_URL_UNPOOLED" pnpm --filter @relaydock/server prisma:deploy'
+pnpm dlx vercel@55.0.0 deploy --prod --regions sin1
+```
+
+Vercel WebSockets and Services are Beta features. A WebSocket closes when its Function reaches the plan's maximum duration; the agent and web client reconnect automatically, while PostgreSQL and Redis preserve shared state between Function instances.
 
 ## TLS and network rules
 

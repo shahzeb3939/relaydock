@@ -176,9 +176,19 @@ export function registerDeviceRoutes(
           status: { in: ['queued', 'dispatched', 'running', 'waiting_for_input'] },
         },
       });
-      for (const job of affectedJobs) {
-        const cancel: ServerToAgentMessage = createMessage('job.cancel', { jobId: job.id });
-        connections.sendToAgent(deviceId, cancel);
+      const cancellationResults = await Promise.allSettled(
+        affectedJobs.map((job) => {
+          const cancel: ServerToAgentMessage = createMessage('job.cancel', { jobId: job.id });
+          return connections.sendToAgent(deviceId, cancel);
+        }),
+      );
+      for (const result of cancellationResults) {
+        if (result.status === 'rejected') {
+          request.log.warn(
+            { err: result.reason, deviceId },
+            'failed to request job cancellation during device revocation',
+          );
+        }
       }
       await database.$transaction([
         database.device.update({ where: { id: deviceId }, data: { status: 'revoked' } }),
@@ -200,17 +210,24 @@ export function registerDeviceRoutes(
         status: 'revoked',
         lastSeenAt: (device.lastSeenAt ?? now).toISOString(),
       });
-      connections.broadcastDevice(ownerId, revoked);
-      for (const job of affectedJobs) {
-        const disconnected: ServerToClientMessage = createMessage('job.status', {
-          jobId: job.id,
-          status: 'disconnected',
-          exitCode: job.exitCode,
-        });
-        connections.broadcastJob(ownerId, job.id, disconnected);
+      const notificationResults = await Promise.allSettled([
+        connections.broadcastDevice(ownerId, revoked),
+        ...affectedJobs.map((job) => {
+          const disconnected: ServerToClientMessage = createMessage('job.status', {
+            jobId: job.id,
+            status: 'disconnected',
+            exitCode: job.exitCode,
+          });
+          return connections.broadcastJob(ownerId, job.id, disconnected);
+        }),
+        connections.closeDevice(deviceId, 'device revoked'),
+        validations.cancelForDevice(deviceId),
+      ]);
+      for (const result of notificationResults) {
+        if (result.status === 'rejected') {
+          request.log.warn({ err: result.reason, deviceId }, 'device revocation follow-up failed');
+        }
       }
-      connections.closeDevice(deviceId, 'device revoked');
-      validations.cancelForDevice(deviceId);
       await audit.record(request, { action: 'device.revoked', userId: ownerId, deviceId });
       return reply.status(204).send();
     },
@@ -243,7 +260,7 @@ export function registerDeviceRoutes(
       if (device.status === 'revoked') {
         throw new AppError(409, 'DEVICE_REVOKED', 'A revoked device cannot register repositories.');
       }
-      if (!connections.isAgentOnline(deviceId)) {
+      if (!(await connections.isAgentOnline(deviceId))) {
         throw new AppError(409, 'DEVICE_OFFLINE', 'The device must be online to validate a path.');
       }
 

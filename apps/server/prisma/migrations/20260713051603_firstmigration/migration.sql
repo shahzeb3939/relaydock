@@ -1,0 +1,29 @@
+-- AlterTable
+ALTER TABLE "Action" ALTER COLUMN "id" DROP DEFAULT;
+
+-- AlterTable
+ALTER TABLE "AuditEvent" ALTER COLUMN "id" DROP DEFAULT;
+
+-- AlterTable
+ALTER TABLE "Device" ALTER COLUMN "id" DROP DEFAULT;
+
+-- AlterTable
+ALTER TABLE "DeviceCredential" ALTER COLUMN "id" DROP DEFAULT;
+
+-- AlterTable
+ALTER TABLE "Job" ALTER COLUMN "id" DROP DEFAULT;
+
+-- AlterTable
+ALTER TABLE "JobOutputChunk" ALTER COLUMN "id" DROP DEFAULT;
+
+-- AlterTable
+ALTER TABLE "PairingCode" ALTER COLUMN "id" DROP DEFAULT;
+
+-- AlterTable
+ALTER TABLE "Repository" ALTER COLUMN "id" DROP DEFAULT;
+
+-- AlterTable
+ALTER TABLE "Session" ALTER COLUMN "id" DROP DEFAULT;
+
+-- AlterTable
+ALTER TABLE "User" ALTER COLUMN "id" DROP DEFAULT;

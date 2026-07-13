@@ -112,7 +112,7 @@ export function registerRepositoryRoutes(
         if (!pathLooksAbsolute(nextPath)) {
           throw new AppError(400, 'PATH_NOT_ABSOLUTE', 'Repository path must be absolute.');
         }
-        if (!connections.isAgentOnline(repository.deviceId)) {
+        if (!(await connections.isAgentOnline(repository.deviceId))) {
           throw new AppError(409, 'DEVICE_OFFLINE', 'The device must be online to change a path.');
         }
         const wasEnabled = repository.enabled;

@@ -67,7 +67,7 @@ export class JobService {
       status: updated.status,
       exitCode: updated.exitCode,
     });
-    this.connections.broadcastJob(updated.userId, jobId, message);
+    await this.connections.broadcastJob(updated.userId, jobId, message);
     return updated;
   }
 
@@ -138,7 +138,7 @@ export class JobService {
           stream: chunk.stream,
           data: chunk.data,
         });
-        this.connections.broadcastJob(job.userId, jobId, message);
+        await this.connections.broadcastJob(job.userId, jobId, message);
       }
       result = { chunks: retainedNewChunks, truncated: retention.truncated };
     });
@@ -206,11 +206,11 @@ export class JobService {
         status: 'cancelled',
         exitCode: cancelled.exitCode,
       });
-      this.connections.broadcastJob(userId, jobId, statusMessage);
+      await this.connections.broadcastJob(userId, jobId, statusMessage);
       return cancelled;
     }
     const message: ServerToAgentMessage = createMessage('job.cancel', { jobId });
-    if (!this.connections.sendToAgent(job.deviceId, message)) {
+    if (!(await this.connections.sendToAgent(job.deviceId, message))) {
       throw new AppError(
         409,
         'DEVICE_OFFLINE',
@@ -239,7 +239,7 @@ export class JobService {
       inputSequence,
       data,
     });
-    if (!this.connections.sendToAgent(job.deviceId, message)) {
+    if (!(await this.connections.sendToAgent(job.deviceId, message))) {
       throw new AppError(409, 'DEVICE_OFFLINE', 'The device is offline.');
     }
   }
@@ -249,7 +249,7 @@ export class JobService {
     if (job === null) throw new AppError(404, 'JOB_NOT_FOUND', 'Job not found.');
     if (!job.interactive || isTerminalJobStatus(job.status)) return;
     const message: ServerToAgentMessage = createMessage('job.resize', { jobId, columns, rows });
-    if (!this.connections.sendToAgent(job.deviceId, message)) {
+    if (!(await this.connections.sendToAgent(job.deviceId, message))) {
       throw new AppError(409, 'DEVICE_OFFLINE', 'The device is offline.');
     }
   }

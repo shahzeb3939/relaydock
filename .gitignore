@@ -9,3 +9,6 @@ coverage/
 apps/server/prisma/dev.db
 apps/agent/relaydock-agent
 tmp/
+.vercel
+.env.local
+.env.*.local

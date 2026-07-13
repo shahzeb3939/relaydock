@@ -59,4 +59,27 @@ describe('server environment', () => {
       }),
     ).toThrow(/CREDENTIAL_SECRET/);
   });
+
+  it('accepts a namespaced Redis relay configuration', () => {
+    const environment = parseServerEnvironment({
+      ...baseEnvironment,
+      KV_URL: 'rediss://default:secret@example.test:6379',
+      RELAYDOCK_REDIS_NAMESPACE: 'production',
+      RELAYDOCK_RELAY_ACK_TIMEOUT_MS: '2500',
+      CRON_SECRET: 'a-cron-secret-with-more-than-32-characters',
+    });
+
+    expect(environment.REDIS_URL).toBe('rediss://default:secret@example.test:6379');
+    expect(environment.REDIS_NAMESPACE).toBe('production');
+    expect(environment.RELAY_ACK_TIMEOUT_MS).toBe(2500);
+  });
+
+  it('rejects non-Redis relay URLs', () => {
+    expect(() =>
+      parseServerEnvironment({
+        ...baseEnvironment,
+        RELAYDOCK_REDIS_URL: 'https://example.test/redis',
+      }),
+    ).toThrow(/redis:\/\//);
+  });
 });
