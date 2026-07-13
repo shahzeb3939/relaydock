@@ -310,6 +310,179 @@ func TestInstallRepairFailureKeepsExistingConfiguration(t *testing.T) {
 	}
 }
 
+func TestDerivedExtraPathFiltersAndDeduplicates(t *testing.T) {
+	if os.PathSeparator == '\\' {
+		t.Skip("Unix PATH test")
+	}
+	separator := string(os.PathListSeparator)
+	raw := strings.Join([]string{
+		"/opt/homebrew/bin",
+		"relative/skip",
+		"",
+		"/opt/homebrew/bin",  // duplicate of the first entry
+		"  /usr/local/bin  ", // surrounding whitespace is trimmed
+		"/usr/local/bin/",    // cleans to /usr/local/bin, another duplicate
+		"/Users/me/.local/bin",
+	}, separator)
+	got := derivedExtraPath(raw)
+	want := []string{"/opt/homebrew/bin", "/usr/local/bin", "/Users/me/.local/bin"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("derivedExtraPath = %#v, want %#v", got, want)
+	}
+	if derivedExtraPath("") != nil {
+		t.Fatal("empty PATH should yield a nil list")
+	}
+	if derivedExtraPath("relative/only"+separator+"also/relative") != nil {
+		t.Fatal("a PATH with no absolute entries should yield a nil list")
+	}
+}
+
+func TestInstallPersistsCommandPathOnPairAndRepair(t *testing.T) {
+	if os.PathSeparator == '\\' {
+		t.Skip("Unix PATH test")
+	}
+	separator := string(os.PathListSeparator)
+	commandPath := strings.Join([]string{"/opt/homebrew/bin", "/Users/me/.local/bin"}, separator)
+	want := []string{"/opt/homebrew/bin", "/Users/me/.local/bin"}
+
+	// A fresh pairing records the PATH the installer inherited.
+	freshHome := t.TempDir()
+	freshConfig := filepath.Join(freshHome, ".config", "relaydock", "agent.json")
+	if _, err := install(context.Background(), Options{
+		Server:       "https://relay.example.com",
+		Code:         "FIRST-CODE",
+		Name:         "Device",
+		ConfigPath:   freshConfig,
+		AgentVersion: "0.1.0",
+	}, dependencies{
+		goos:           "linux",
+		uid:            501,
+		homeDirectory:  freshHome,
+		executablePath: executableFixture(t, "agent"),
+		commandPath:    commandPath,
+		pair: func(_ context.Context, options client.PairOptions) (config.Config, error) {
+			return validAgentConfig(options.Server, options.Name), nil
+		},
+		runner: &recordingRunner{},
+	}); err != nil {
+		t.Fatalf("fresh pair install: %v", err)
+	}
+	fresh, err := config.Load(freshConfig)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(fresh.ExtraPath, want) {
+		t.Fatalf("fresh pair extraPath = %#v, want %#v", fresh.ExtraPath, want)
+	}
+
+	// Re-pairing with a code records the freshly captured PATH as well.
+	repairHome := t.TempDir()
+	repairConfig := filepath.Join(repairHome, ".config", "relaydock", "agent.json")
+	if err := config.Save(repairConfig, validAgentConfig("https://relay.example.com", "Old")); err != nil {
+		t.Fatal(err)
+	}
+	newDeviceID := uuid.NewString()
+	if _, err := install(context.Background(), Options{
+		Server:       "https://relay.example.com",
+		Code:         "NEW-CODE",
+		Name:         "New name",
+		ConfigPath:   repairConfig,
+		AgentVersion: "0.1.0",
+	}, dependencies{
+		goos:           "linux",
+		uid:            501,
+		homeDirectory:  repairHome,
+		executablePath: executableFixture(t, "agent"),
+		commandPath:    commandPath,
+		pair: func(_ context.Context, options client.PairOptions) (config.Config, error) {
+			return config.Config{
+				Server:       options.Server,
+				DeviceID:     newDeviceID,
+				Credential:   "rdc_new_credential",
+				DeviceName:   options.Name,
+				Repositories: map[string]string{},
+			}, nil
+		},
+		runner: &recordingRunner{},
+	}); err != nil {
+		t.Fatalf("re-pair install: %v", err)
+	}
+	repaired, err := config.Load(repairConfig)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(repaired.ExtraPath, want) {
+		t.Fatalf("re-pair extraPath = %#v, want %#v", repaired.ExtraPath, want)
+	}
+}
+
+func TestInstallHealsMissingCommandPathWithoutClobbering(t *testing.T) {
+	if os.PathSeparator == '\\' {
+		t.Skip("Unix PATH test")
+	}
+	separator := string(os.PathListSeparator)
+	home := t.TempDir()
+	configPath := filepath.Join(home, ".config", "relaydock", "agent.json")
+	if err := config.Save(configPath, validAgentConfig("https://relay.example.com", "Device")); err != nil {
+		t.Fatal(err)
+	}
+	refusePairing := func(context.Context, client.PairOptions) (config.Config, error) {
+		t.Fatal("pair must not run for a code-less install")
+		return config.Config{}, nil
+	}
+
+	// A code-less re-run heals a configuration that has no recorded PATH.
+	result, err := install(context.Background(), Options{
+		Server:     "https://relay.example.com",
+		ConfigPath: configPath,
+	}, dependencies{
+		goos:           "linux",
+		uid:            501,
+		homeDirectory:  home,
+		executablePath: executableFixture(t, "agent"),
+		commandPath:    strings.Join([]string{"/opt/homebrew/bin", "/Users/me/.local/bin"}, separator),
+		pair:           refusePairing,
+		runner:         &recordingRunner{},
+	})
+	if err != nil {
+		t.Fatalf("heal install: %v", err)
+	}
+	if !result.AlreadyPaired || result.ReplacedPrevious {
+		t.Fatalf("heal should preserve the existing identity: %#v", result)
+	}
+	want := []string{"/opt/homebrew/bin", "/Users/me/.local/bin"}
+	healed, err := config.Load(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(healed.ExtraPath, want) {
+		t.Fatalf("healed extraPath = %#v, want %#v", healed.ExtraPath, want)
+	}
+
+	// A later code-less run with a different PATH must not overwrite the recorded list.
+	if _, err := install(context.Background(), Options{
+		Server:     "https://relay.example.com",
+		ConfigPath: configPath,
+	}, dependencies{
+		goos:           "linux",
+		uid:            501,
+		homeDirectory:  home,
+		executablePath: executableFixture(t, "agent"),
+		commandPath:    "/different/bin",
+		pair:           refusePairing,
+		runner:         &recordingRunner{},
+	}); err != nil {
+		t.Fatalf("second heal install: %v", err)
+	}
+	preserved, err := config.Load(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(preserved.ExtraPath, want) {
+		t.Fatalf("second run clobbered extraPath: %#v, want %#v", preserved.ExtraPath, want)
+	}
+}
+
 func TestInstallRejectsInsecureExistingConfiguration(t *testing.T) {
 	if os.PathSeparator == '\\' {
 		t.Skip("Unix permission test")

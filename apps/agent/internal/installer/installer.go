@@ -49,6 +49,7 @@ type dependencies struct {
 	uid            int
 	homeDirectory  string
 	executablePath string
+	commandPath    string
 	pair           pairFunc
 	runner         commandRunner
 }
@@ -67,6 +68,7 @@ func Install(ctx context.Context, options Options) (Result, error) {
 		uid:            effectiveUID(),
 		homeDirectory:  homeDirectory,
 		executablePath: executablePath,
+		commandPath:    os.Getenv("PATH"),
 		pair:           client.Pair,
 		runner:         execCommandRunner{},
 	})
@@ -102,7 +104,9 @@ func install(ctx context.Context, options Options, dependencies dependencies) (R
 	}
 	configPath = filepath.Clean(configPath)
 
-	outcome, err := ensurePaired(ctx, options, serverURL, configPath, dependencies.pair)
+	extraPath := derivedExtraPath(dependencies.commandPath)
+
+	outcome, err := ensurePaired(ctx, options, serverURL, configPath, extraPath, dependencies.pair)
 	if err != nil {
 		return Result{}, err
 	}
@@ -137,6 +141,7 @@ func ensurePaired(
 	options Options,
 	serverURL string,
 	configPath string,
+	extraPath []string,
 	pair pairFunc,
 ) (pairingOutcome, error) {
 	code := strings.TrimSpace(options.Code)
@@ -147,7 +152,7 @@ func ensurePaired(
 		// wants to (re)pair this device, so replace the stored credential; otherwise
 		// preserve the existing device identity and only refresh the binary/service.
 		if code != "" {
-			return repair(ctx, options, serverURL, configPath, pair)
+			return repair(ctx, options, serverURL, configPath, extraPath, pair)
 		}
 		cfg, loadErr := config.Load(configPath)
 		if loadErr != nil {
@@ -164,6 +169,16 @@ func ensurePaired(
 				serverURL,
 			)
 		}
+		// Heal older installs that predate PATH capture: if nothing is recorded,
+		// persist the current command PATH so a re-run without a code still teaches
+		// the background service where the user's tools live. An existing list is
+		// left untouched so a manual customization is never clobbered.
+		if len(cfg.ExtraPath) == 0 && len(extraPath) > 0 {
+			cfg.ExtraPath = extraPath
+			if err := config.Save(configPath, cfg); err != nil {
+				return pairingOutcome{}, fmt.Errorf("record command search path: %w", err)
+			}
+		}
 		return pairingOutcome{config: cfg, alreadyPaired: true}, nil
 	case !errors.Is(statErr, os.ErrNotExist):
 		return pairingOutcome{}, fmt.Errorf("inspect existing agent configuration: %w", statErr)
@@ -176,6 +191,7 @@ func ensurePaired(
 	if err != nil {
 		return pairingOutcome{}, err
 	}
+	cfg.ExtraPath = extraPath
 	if err := config.SaveNew(configPath, cfg); err != nil {
 		if errors.Is(err, os.ErrExist) {
 			return pairingOutcome{}, fmt.Errorf("agent configuration appeared while pairing; preserved the existing file at %s: %w", configPath, err)
@@ -196,12 +212,14 @@ func repair(
 	options Options,
 	serverURL string,
 	configPath string,
+	extraPath []string,
 	pair pairFunc,
 ) (pairingOutcome, error) {
 	cfg, err := pairWithServer(ctx, options, serverURL, pair)
 	if err != nil {
 		return pairingOutcome{}, err
 	}
+	cfg.ExtraPath = extraPath
 	backupPath := configPath + ".previous"
 	if err := os.Rename(configPath, backupPath); err != nil {
 		return pairingOutcome{}, fmt.Errorf("back up existing agent configuration: %w", err)
@@ -232,6 +250,45 @@ func pairWithServer(
 		Name:         options.Name,
 		AgentVersion: options.AgentVersion,
 	})
+}
+
+// maxExtraPathEntries bounds how many directories are persisted so a pathological
+// PATH cannot bloat the configuration file.
+const maxExtraPathEntries = 64
+
+// derivedExtraPath converts the PATH the installer inherited into a deduplicated
+// list of absolute directories. The installer runs from the user's interactive
+// shell (via the curl one-liner), so this captures the same PATH a terminal sees.
+// The agent later runs under launchd or systemd with a minimal PATH, so recording
+// these directories lets spawned commands find user-installed tools (claude, node,
+// git, ...) exactly as they would in a terminal. Entries are validated the same way
+// config.Config does — absolute, no list separator — so the result always persists.
+func derivedExtraPath(rawPath string) []string {
+	if rawPath == "" {
+		return nil
+	}
+	separator := string(os.PathListSeparator)
+	seen := make(map[string]struct{})
+	result := make([]string, 0)
+	for _, entry := range strings.Split(rawPath, separator) {
+		entry = strings.TrimSpace(entry)
+		if entry == "" || !filepath.IsAbs(entry) {
+			continue
+		}
+		entry = filepath.Clean(entry)
+		if _, duplicate := seen[entry]; duplicate {
+			continue
+		}
+		seen[entry] = struct{}{}
+		result = append(result, entry)
+		if len(result) >= maxExtraPathEntries {
+			break
+		}
+	}
+	if len(result) == 0 {
+		return nil
+	}
+	return result
 }
 
 func installExecutable(sourcePath, destinationPath string) error {

@@ -19,6 +19,10 @@ is replaced (the previous one is backed up alongside it) so a device that was
 removed from the server can be added again. Re-running without --code preserves
 the existing device identity and only refreshes the binary and background
 service.
+
+The installer records the PATH of the shell you run it from so the background
+agent can find the same tools you use in a terminal (claude, node, git, ...),
+even though it runs as a launchd/systemd service with a minimal PATH.
 EOF
 }
 
