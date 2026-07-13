@@ -77,10 +77,20 @@ export function AppShell() {
         <header className="mobile-header">
           <Brand compact />
           <strong>{titleForPath(location.pathname)}</strong>
-          <span
-            className={`network-indicator ${online ? 'online' : 'offline'}`}
-            title={online ? 'Online' : 'Offline'}
-          />
+          <div className="mobile-header-actions">
+            <span
+              className={`network-indicator ${online ? 'online' : 'offline'}`}
+              title={online ? 'Online' : 'Offline'}
+            />
+            <button
+              type="button"
+              className="mobile-signout"
+              onClick={() => void handleLogout()}
+              disabled={loggingOut}
+            >
+              {loggingOut ? 'Signing out…' : 'Sign out'}
+            </button>
+          </div>
         </header>
         <main id="main-content" className="content" tabIndex={-1}>
           <Outlet />

@@ -54,8 +54,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     register: async (email, password) => setSession(await api.register(email, password)),
     logout: async () => {
       await api.logout();
-      queryClient.clear();
+      // Mark the session resolved-empty first, then drop the other cached data.
+      // Using clear() here evicted the session query and triggered an immediate
+      // refetch, so route guards briefly still saw the old user and only
+      // redirected to /login after a manual refresh. Setting it to null leaves
+      // the query resolved (no refetch) so the guards react right away.
       queryClient.setQueryData(queryKeys.session, null);
+      queryClient.removeQueries({
+        predicate: (query) => query.queryKey[0] !== queryKeys.session[0],
+      });
     },
   };
 

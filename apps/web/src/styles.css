@@ -1844,7 +1844,7 @@ input[type='checkbox'] {
     top: 0;
     display: grid;
     min-height: 58px;
-    grid-template-columns: 42px 1fr 42px;
+    grid-template-columns: 42px 1fr auto;
     align-items: center;
     padding: calc(8px + env(safe-area-inset-top)) 14px 8px;
     border-bottom: 1px solid var(--border);
@@ -1876,6 +1876,32 @@ input[type='checkbox'] {
 
   .network-indicator.online {
     background: var(--accent);
+  }
+
+  .mobile-header-actions {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    justify-self: end;
+  }
+
+  .mobile-header-actions .network-indicator {
+    margin-right: 2px;
+  }
+
+  .mobile-signout {
+    padding: 6px 11px;
+    border: 1px solid var(--border-strong);
+    border-radius: 8px;
+    background: var(--surface-raised);
+    color: var(--text);
+    font-size: 0.72rem;
+    font-weight: 700;
+    cursor: pointer;
+  }
+
+  .mobile-signout:disabled {
+    opacity: 0.6;
   }
 
   .content {
