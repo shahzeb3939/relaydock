@@ -84,9 +84,12 @@ func runInstall(arguments []string) error {
 	if err != nil {
 		return err
 	}
-	if result.AlreadyPaired {
+	switch {
+	case result.ReplacedPrevious:
+		fmt.Printf("Re-paired device %q with a fresh credential; the previous credential was moved to %s.\n", result.DeviceName, result.BackupPath)
+	case result.AlreadyPaired:
 		fmt.Printf("Device is already paired as %q. Existing credential preserved at %s.\n", result.DeviceName, result.ConfigPath)
-	} else {
+	default:
 		fmt.Printf("Paired device %q. Configuration saved to %s.\n", result.DeviceName, result.ConfigPath)
 	}
 	fmt.Printf("Installed RelayDock agent to %s and started its background service.\n", result.BinaryPath)

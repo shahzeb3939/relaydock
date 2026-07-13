@@ -26,11 +26,20 @@ type Options struct {
 }
 
 type Result struct {
-	AlreadyPaired bool
-	BinaryPath    string
-	ConfigPath    string
-	DeviceName    string
-	ServicePath   string
+	AlreadyPaired    bool
+	ReplacedPrevious bool
+	BackupPath       string
+	BinaryPath       string
+	ConfigPath       string
+	DeviceName       string
+	ServicePath      string
+}
+
+type pairingOutcome struct {
+	config           config.Config
+	alreadyPaired    bool
+	replacedPrevious bool
+	backupPath       string
 }
 
 type pairFunc func(context.Context, client.PairOptions) (config.Config, error)
@@ -93,7 +102,7 @@ func install(ctx context.Context, options Options, dependencies dependencies) (R
 	}
 	configPath = filepath.Clean(configPath)
 
-	cfg, alreadyPaired, err := ensurePaired(ctx, options, serverURL, configPath, dependencies.pair)
+	outcome, err := ensurePaired(ctx, options, serverURL, configPath, dependencies.pair)
 	if err != nil {
 		return Result{}, err
 	}
@@ -113,11 +122,13 @@ func install(ctx context.Context, options Options, dependencies dependencies) (R
 		return Result{}, err
 	}
 	return Result{
-		AlreadyPaired: alreadyPaired,
-		BinaryPath:    binaryPath,
-		ConfigPath:    configPath,
-		DeviceName:    cfg.DeviceName,
-		ServicePath:   servicePath,
+		AlreadyPaired:    outcome.alreadyPaired,
+		ReplacedPrevious: outcome.replacedPrevious,
+		BackupPath:       outcome.backupPath,
+		BinaryPath:       binaryPath,
+		ConfigPath:       configPath,
+		DeviceName:       outcome.config.DeviceName,
+		ServicePath:      servicePath,
 	}, nil
 }
 
@@ -127,51 +138,100 @@ func ensurePaired(
 	serverURL string,
 	configPath string,
 	pair pairFunc,
-) (config.Config, bool, error) {
-	_, err := os.Lstat(configPath)
+) (pairingOutcome, error) {
+	code := strings.TrimSpace(options.Code)
+	_, statErr := os.Lstat(configPath)
 	switch {
-	case err == nil:
+	case statErr == nil:
+		// A configuration already exists. An explicit pairing code means the caller
+		// wants to (re)pair this device, so replace the stored credential; otherwise
+		// preserve the existing device identity and only refresh the binary/service.
+		if code != "" {
+			return repair(ctx, options, serverURL, configPath, pair)
+		}
 		cfg, loadErr := config.Load(configPath)
 		if loadErr != nil {
-			return config.Config{}, false, loadErr
+			return pairingOutcome{}, loadErr
 		}
 		existingServer, parseErr := config.ParseServerURL(cfg.Server)
 		if parseErr != nil {
-			return config.Config{}, false, parseErr
+			return pairingOutcome{}, parseErr
 		}
 		if existingServer.String() != serverURL {
-			return config.Config{}, false, fmt.Errorf(
-				"agent is already paired with %s; refusing to replace its credential with server %s",
+			return pairingOutcome{}, fmt.Errorf(
+				"agent is already paired with %s; pass --code to re-pair with %s",
 				existingServer.String(),
 				serverURL,
 			)
 		}
-		return cfg, true, nil
-	case !errors.Is(err, os.ErrNotExist):
-		return config.Config{}, false, fmt.Errorf("inspect existing agent configuration: %w", err)
+		return pairingOutcome{config: cfg, alreadyPaired: true}, nil
+	case !errors.Is(statErr, os.ErrNotExist):
+		return pairingOutcome{}, fmt.Errorf("inspect existing agent configuration: %w", statErr)
 	}
 
-	if strings.TrimSpace(options.Code) == "" {
-		return config.Config{}, false, errors.New("--code is required because this device has not been paired")
+	if code == "" {
+		return pairingOutcome{}, errors.New("--code is required because this device has not been paired")
 	}
+	cfg, err := pairWithServer(ctx, options, serverURL, pair)
+	if err != nil {
+		return pairingOutcome{}, err
+	}
+	if err := config.SaveNew(configPath, cfg); err != nil {
+		if errors.Is(err, os.ErrExist) {
+			return pairingOutcome{}, fmt.Errorf("agent configuration appeared while pairing; preserved the existing file at %s: %w", configPath, err)
+		}
+		return pairingOutcome{}, fmt.Errorf("save paired device configuration: %w", err)
+	}
+	return pairingOutcome{config: cfg}, nil
+}
+
+// repair pairs the device with a fresh code and replaces the credential already
+// on disk. The server is contacted first so a rejected or expired code leaves the
+// existing configuration untouched; only after a successful pairing is the old
+// credential moved aside to a ".previous" backup and the new one written. If the
+// new configuration cannot be saved, the previous credential is restored so the
+// device is never left unpaired.
+func repair(
+	ctx context.Context,
+	options Options,
+	serverURL string,
+	configPath string,
+	pair pairFunc,
+) (pairingOutcome, error) {
+	cfg, err := pairWithServer(ctx, options, serverURL, pair)
+	if err != nil {
+		return pairingOutcome{}, err
+	}
+	backupPath := configPath + ".previous"
+	if err := os.Rename(configPath, backupPath); err != nil {
+		return pairingOutcome{}, fmt.Errorf("back up existing agent configuration: %w", err)
+	}
+	if err := config.SaveNew(configPath, cfg); err != nil {
+		if restoreErr := os.Rename(backupPath, configPath); restoreErr != nil {
+			return pairingOutcome{}, fmt.Errorf(
+				"save re-paired device configuration: %w; also failed to restore previous configuration from %s: %v",
+				err, backupPath, restoreErr,
+			)
+		}
+		return pairingOutcome{}, fmt.Errorf("save re-paired device configuration: %w", err)
+	}
+	return pairingOutcome{config: cfg, replacedPrevious: true, backupPath: backupPath}, nil
+}
+
+func pairWithServer(
+	ctx context.Context,
+	options Options,
+	serverURL string,
+	pair pairFunc,
+) (config.Config, error) {
 	pairContext, cancel := context.WithTimeout(ctx, pairingTimeout)
 	defer cancel()
-	cfg, err := pair(pairContext, client.PairOptions{
+	return pair(pairContext, client.PairOptions{
 		Server:       serverURL,
 		Code:         options.Code,
 		Name:         options.Name,
 		AgentVersion: options.AgentVersion,
 	})
-	if err != nil {
-		return config.Config{}, false, err
-	}
-	if err := config.SaveNew(configPath, cfg); err != nil {
-		if errors.Is(err, os.ErrExist) {
-			return config.Config{}, false, fmt.Errorf("agent configuration appeared while pairing; preserved the existing file at %s: %w", configPath, err)
-		}
-		return config.Config{}, false, fmt.Errorf("save paired device configuration: %w", err)
-	}
-	return cfg, false, nil
 }
 
 func installExecutable(sourcePath, destinationPath string) error {

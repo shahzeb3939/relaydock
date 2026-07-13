@@ -14,9 +14,11 @@ Install and pair the RelayDock agent as a background user service.
 Usage:
   install-agent.sh --server URL [--code CODE] [--name NAME]
 
-The pairing code is required only when this user account has not already
-paired an agent with the same server. Re-running this installer preserves the
-existing device identity and refreshes the binary and background service.
+Pass --code to pair or re-pair this device: if a credential already exists it
+is replaced (the previous one is backed up alongside it) so a device that was
+removed from the server can be added again. Re-running without --code preserves
+the existing device identity and only refreshes the binary and background
+service.
 EOF
 }
 

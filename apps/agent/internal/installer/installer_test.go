@@ -108,7 +108,6 @@ func TestInstallPairsOnceAndPreservesExistingCredential(t *testing.T) {
 	}
 	second, err := install(context.Background(), Options{
 		Server:       "https://relay.example.com",
-		Code:         "UNUSED-CODE",
 		Name:         "Ignored replacement name",
 		ConfigPath:   configPath,
 		AgentVersion: "0.2.0",
@@ -118,6 +117,9 @@ func TestInstallPairsOnceAndPreservesExistingCredential(t *testing.T) {
 	}
 	if !second.AlreadyPaired {
 		t.Fatal("second install did not report the existing pairing")
+	}
+	if second.ReplacedPrevious {
+		t.Fatal("code-less reinstall re-paired instead of preserving the credential")
 	}
 	if second.DeviceName != "First name" {
 		t.Fatalf("device name = %q, want preserved name", second.DeviceName)
@@ -149,7 +151,6 @@ func TestInstallRefusesServerMismatchWithoutChangingConfiguration(t *testing.T) 
 	runner := &recordingRunner{}
 	_, err = install(context.Background(), Options{
 		Server:     "https://second.example.com",
-		Code:       "NEW-CODE",
 		Name:       "Replacement",
 		ConfigPath: configPath,
 	}, dependencies{
@@ -158,7 +159,7 @@ func TestInstallRefusesServerMismatchWithoutChangingConfiguration(t *testing.T) 
 		homeDirectory:  home,
 		executablePath: executableFixture(t, "agent"),
 		pair: func(context.Context, client.PairOptions) (config.Config, error) {
-			t.Fatal("pair was called for an existing configuration")
+			t.Fatal("pair was called for a code-less server mismatch")
 			return config.Config{}, nil
 		},
 		runner: runner,
@@ -178,6 +179,134 @@ func TestInstallRefusesServerMismatchWithoutChangingConfiguration(t *testing.T) 
 	}
 	if _, statErr := os.Stat(filepath.Join(home, ".local", "bin", "relaydock-agent")); !errors.Is(statErr, os.ErrNotExist) {
 		t.Fatalf("binary was installed after mismatch: %v", statErr)
+	}
+}
+
+func TestInstallRepairsWhenCodeProvidedForExistingConfiguration(t *testing.T) {
+	home := t.TempDir()
+	configPath := filepath.Join(home, ".config", "relaydock", "agent.json")
+	oldConfig := validAgentConfig("https://relay.example.com", "Old device")
+	oldConfig.Credential = "rdc_old_credential"
+	if err := config.Save(configPath, oldConfig); err != nil {
+		t.Fatal(err)
+	}
+	oldBytes, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	runner := &recordingRunner{}
+	pairCalls := 0
+	newDeviceID := uuid.NewString()
+	pair := func(_ context.Context, options client.PairOptions) (config.Config, error) {
+		pairCalls++
+		if options.Server != "https://relay.example.com" || options.Code != "NEW-CODE" || options.Name != "New name" {
+			t.Fatalf("pair options = %#v", options)
+		}
+		return config.Config{
+			Server:             options.Server,
+			DeviceID:           newDeviceID,
+			Credential:         "rdc_new_credential",
+			DeviceName:         options.Name,
+			Repositories:       map[string]string{},
+			AllowedEnvironment: append([]string(nil), config.DefaultAllowedEnvironment...),
+		}, nil
+	}
+	result, err := install(context.Background(), Options{
+		Server:       "https://relay.example.com",
+		Code:         "NEW-CODE",
+		Name:         "New name",
+		ConfigPath:   configPath,
+		AgentVersion: "0.1.0",
+	}, dependencies{
+		goos:           "linux",
+		uid:            501,
+		homeDirectory:  home,
+		executablePath: executableFixture(t, "agent-repair"),
+		pair:           pair,
+		runner:         runner,
+	})
+	if err != nil {
+		t.Fatalf("re-pair install: %v", err)
+	}
+	if pairCalls != 1 {
+		t.Fatalf("pair calls = %d, want 1", pairCalls)
+	}
+	if result.AlreadyPaired {
+		t.Fatal("re-pair reported an existing pairing was preserved")
+	}
+	if !result.ReplacedPrevious {
+		t.Fatal("re-pair did not report replacing the previous credential")
+	}
+	backupPath := configPath + ".previous"
+	if result.BackupPath != backupPath {
+		t.Fatalf("backup path = %q, want %q", result.BackupPath, backupPath)
+	}
+
+	reloaded, err := config.Load(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if reloaded.Credential != "rdc_new_credential" || reloaded.DeviceID != newDeviceID || reloaded.DeviceName != "New name" {
+		t.Fatalf("reloaded config = %#v, want the freshly paired credential", reloaded)
+	}
+	backupBytes, err := os.ReadFile(backupPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(backupBytes, oldBytes) {
+		t.Fatal("backup does not preserve the previous configuration verbatim")
+	}
+	assertMode(t, backupPath, 0o600)
+	assertMode(t, configPath, 0o600)
+	assertFileContent(t, result.BinaryPath, "agent-repair")
+	assertSystemdCommands(t, runner.commands)
+}
+
+func TestInstallRepairFailureKeepsExistingConfiguration(t *testing.T) {
+	home := t.TempDir()
+	configPath := filepath.Join(home, ".config", "relaydock", "agent.json")
+	if err := config.Save(configPath, validAgentConfig("https://relay.example.com", "Existing")); err != nil {
+		t.Fatal(err)
+	}
+	before, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	runner := &recordingRunner{}
+	_, err = install(context.Background(), Options{
+		Server:     "https://relay.example.com",
+		Code:       "BAD-CODE",
+		Name:       "Replacement",
+		ConfigPath: configPath,
+	}, dependencies{
+		goos:           "linux",
+		uid:            501,
+		homeDirectory:  home,
+		executablePath: executableFixture(t, "agent"),
+		pair: func(context.Context, client.PairOptions) (config.Config, error) {
+			return config.Config{}, errors.New("pairing rejected")
+		},
+		runner: runner,
+	})
+	if err == nil || !strings.Contains(err.Error(), "pairing rejected") {
+		t.Fatalf("install error = %v", err)
+	}
+	after, readErr := os.ReadFile(configPath)
+	if readErr != nil {
+		t.Fatal(readErr)
+	}
+	if !reflect.DeepEqual(after, before) {
+		t.Fatal("failed re-pair changed the existing configuration")
+	}
+	if _, statErr := os.Stat(configPath + ".previous"); !errors.Is(statErr, os.ErrNotExist) {
+		t.Fatalf("failed re-pair left a backup file behind: %v", statErr)
+	}
+	if len(runner.commands) != 0 {
+		t.Fatalf("service commands ran after a failed re-pair: %#v", runner.commands)
+	}
+	if _, statErr := os.Stat(filepath.Join(home, ".local", "bin", "relaydock-agent")); !errors.Is(statErr, os.ErrNotExist) {
+		t.Fatalf("binary was installed after a failed re-pair: %v", statErr)
 	}
 }
 
