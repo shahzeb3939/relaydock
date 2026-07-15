@@ -8,7 +8,6 @@ import type {
 import { createMessage } from '@relaydock/protocol';
 import { canTransitionJob, isTerminalJobStatus } from '@relaydock/shared';
 
-import { chunkIdsToRemove } from '../lib/domain.js';
 import { AppError } from '../lib/errors.js';
 import { serializeOutputChunk } from '../lib/serializers.js';
 import type { DatabaseClient } from '../prisma.js';
@@ -80,7 +79,7 @@ export class JobService {
     await this.serializeOutput(jobId, async () => {
       const job = await this.database.job.findUnique({
         where: { id: jobId },
-        select: { deviceId: true, userId: true, outputTruncated: true },
+        select: { deviceId: true, userId: true, outputTruncated: true, retainedOutputBytes: true },
       });
       if (job === null || job.deviceId !== deviceId || chunks.length === 0) return;
       const sequences = [...new Set(chunks.map((chunk) => chunk.sequence))];
@@ -92,44 +91,64 @@ export class JobService {
       const newChunks = chunks.filter((chunk) => !existingSequences.has(chunk.sequence));
       if (newChunks.length === 0) return;
 
+      const inserts = newChunks.map((chunk) => ({
+        jobId,
+        sequence: chunk.sequence,
+        stream: chunk.stream,
+        data: chunk.data,
+        byteLength: Buffer.byteLength(chunk.data, 'utf8'),
+      }));
+      const addedBytes = inserts.reduce((sum, chunk) => sum + chunk.byteLength, 0);
+
       const retention = await this.database.$transaction(async (transaction) => {
-        await transaction.jobOutputChunk.createMany({
-          data: newChunks.map((chunk) => ({
-            jobId,
-            sequence: chunk.sequence,
-            stream: chunk.stream,
-            data: chunk.data,
-            byteLength: Buffer.byteLength(chunk.data, 'utf8'),
-          })),
-          skipDuplicates: true,
-        });
-        const allChunks = await transaction.jobOutputChunk.findMany({
-          where: { jobId },
-          select: { id: true, sequence: true, byteLength: true },
-          orderBy: { sequence: 'asc' },
-        });
-        const removeIds = chunkIdsToRemove(allChunks, this.maximumOutputBytes);
-        if (removeIds.length > 0) {
-          await transaction.jobOutputChunk.deleteMany({ where: { id: { in: removeIds } } });
+        await transaction.jobOutputChunk.createMany({ data: inserts, skipDuplicates: true });
+
+        // Enforce the retention cap incrementally. `retainedOutputBytes` is a running
+        // total kept on the Job row, so we no longer re-read the job's entire chunk
+        // index on every chunk — that was O(n) reads per chunk and O(n^2) over the
+        // life of a streaming job, a dominant source of database read traffic. We only
+        // read the oldest chunks when eviction is actually required, and only as many
+        // as needed to reclaim the overflow.
+        const projectedBytes = job.retainedOutputBytes + addedBytes;
+        const removedSequences = new Set<number>();
+        let removedBytes = 0;
+        if (projectedBytes > this.maximumOutputBytes) {
+          const bytesToReclaim = projectedBytes - this.maximumOutputBytes;
+          // Evicting reclaims roughly as many chunks as were just added, so read the
+          // oldest rows in pages sized to that, not to the (potentially huge) retained
+          // count. The cursor loop still covers the rare case where more must go.
+          const pageSize = Math.min(Math.max(newChunks.length * 2, 32), 1024);
+          let cursorSequence = -1;
+          while (removedBytes < bytesToReclaim) {
+            const oldest = await transaction.jobOutputChunk.findMany({
+              where: { jobId, sequence: { gt: cursorSequence } },
+              select: { id: true, sequence: true, byteLength: true },
+              orderBy: { sequence: 'asc' },
+              take: pageSize,
+            });
+            if (oldest.length === 0) break;
+            const removeIds: string[] = [];
+            for (const chunk of oldest) {
+              removeIds.push(chunk.id);
+              removedSequences.add(chunk.sequence);
+              removedBytes += chunk.byteLength;
+              cursorSequence = chunk.sequence;
+              if (removedBytes >= bytesToReclaim) break;
+            }
+            await transaction.jobOutputChunk.deleteMany({ where: { id: { in: removeIds } } });
+          }
         }
-        const removed = new Set(removeIds);
-        const retained = allChunks.filter((chunk) => !removed.has(chunk.id));
-        const retainedOutputBytes = retained.reduce((sum, chunk) => sum + chunk.byteLength, 0);
+
+        const truncated = job.outputTruncated || removedSequences.size > 0;
         await transaction.job.update({
           where: { id: jobId },
-          data: {
-            retainedOutputBytes,
-            outputTruncated: job.outputTruncated || removeIds.length > 0,
-          },
+          data: { retainedOutputBytes: projectedBytes - removedBytes, outputTruncated: truncated },
         });
-        return {
-          retainedSequences: new Set(retained.map((chunk) => chunk.sequence)),
-          truncated: job.outputTruncated || removeIds.length > 0,
-        };
+        return { removedSequences, truncated };
       });
 
-      const retainedNewChunks = newChunks.filter((chunk) =>
-        retention.retainedSequences.has(chunk.sequence),
+      const retainedNewChunks = newChunks.filter(
+        (chunk) => !retention.removedSequences.has(chunk.sequence),
       );
       for (const chunk of retainedNewChunks) {
         const message: ServerToClientMessage = createMessage('job.output', {
