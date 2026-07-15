@@ -238,7 +238,7 @@ export function RepositoryPage() {
     queryKey: queryKeys.device(deviceId),
     queryFn: () => api.device(deviceId),
     enabled: Boolean(deviceId),
-    refetchInterval: 15_000,
+    refetchInterval: 30_000,
   });
   const actionsQuery = useQuery({
     queryKey: queryKeys.actions(repositoryId),
@@ -247,9 +247,9 @@ export function RepositoryPage() {
   });
   const jobsQuery = useQuery({
     queryKey: queryKeys.jobs({ repositoryId }),
-    queryFn: () => api.jobs({ repositoryId }),
+    queryFn: () => api.jobs({ repositoryId, limit: 8 }),
     enabled: Boolean(repositoryId),
-    refetchInterval: 10_000,
+    refetchInterval: 30_000,
   });
   const runMutation = useMutation({
     mutationFn: ({ action, confirmed }: { action: Action; confirmed: boolean }) =>

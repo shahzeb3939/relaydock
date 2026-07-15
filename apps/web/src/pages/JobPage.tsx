@@ -45,7 +45,7 @@ function JobConsole({ jobId }: { jobId: string }) {
   const jobQuery = useQuery({
     queryKey: queryKeys.job(jobId),
     queryFn: () => api.job(jobId),
-    refetchInterval: 15_000,
+    refetchInterval: 30_000,
   });
   const outputQuery = useQuery({
     queryKey: queryKeys.output(jobId),

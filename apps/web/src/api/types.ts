@@ -122,4 +122,5 @@ export interface JobFilters {
   deviceId?: string;
   repositoryId?: string;
   status?: JobStatus;
+  limit?: number;
 }

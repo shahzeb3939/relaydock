@@ -203,6 +203,7 @@ export const api = {
       deviceId: filters.deviceId,
       repositoryId: filters.repositoryId,
       status: filters.status,
+      limit: filters.limit === undefined ? undefined : String(filters.limit),
     });
     return (await request<{ jobs: Job[] }>(`/jobs${suffix}`)).jobs;
   },

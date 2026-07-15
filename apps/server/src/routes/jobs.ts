@@ -37,6 +37,7 @@ const listJobsSchema = z.object({
   deviceId: z.string().uuid().optional(),
   repositoryId: z.string().uuid().optional(),
   status: jobStatusSchema.optional(),
+  limit: z.coerce.number().int().min(1).max(100).default(100),
 });
 const outputQuerySchema = z.object({
   afterSequence: z.coerce.number().int().min(-1).default(-1),
@@ -206,7 +207,7 @@ export function registerJobRoutes(app: FastifyInstance, dependencies: JobRouteDe
         device: { select: { id: true, name: true } },
       },
       orderBy: { createdAt: 'desc' },
-      take: 100,
+      take: query.limit,
     });
     return { jobs: jobRows.map(serializeJob) };
   });
