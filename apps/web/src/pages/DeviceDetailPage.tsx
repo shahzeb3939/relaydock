@@ -158,7 +158,7 @@ export function DeviceDetailPage() {
     queryKey: queryKeys.device(deviceId),
     queryFn: () => api.device(deviceId),
     enabled: Boolean(deviceId),
-    refetchInterval: 15_000,
+    refetchInterval: 30_000,
   });
   const revokeMutation = useMutation({
     mutationFn: () => api.revokeDevice(deviceId),

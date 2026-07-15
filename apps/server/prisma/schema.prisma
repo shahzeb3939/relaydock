@@ -33,7 +33,11 @@ enum OutputStream {
 model User {
   id           String        @id @default(uuid()) @db.Uuid
   email        String        @unique @db.VarChar(320)
-  passwordHash String
+  // Null for accounts created through an identity provider (e.g. Google) that
+  // have never set a local password.
+  passwordHash String?
+  // Stable Google subject identifier for accounts linked to Google sign-in.
+  googleSub    String?       @unique @db.VarChar(255)
   createdAt    DateTime      @default(now())
   updatedAt    DateTime      @updatedAt
   sessions     Session[]
@@ -59,21 +63,21 @@ model Session {
 }
 
 model Device {
-  id            String             @id @default(uuid()) @db.Uuid
-  userId        String             @db.Uuid
-  name          String             @db.VarChar(100)
-  platform      String             @db.VarChar(50)
-  architecture  String             @db.VarChar(50)
-  agentVersion  String             @db.VarChar(50)
-  status        DeviceStatus       @default(offline)
-  lastSeenAt    DateTime?
-  createdAt     DateTime           @default(now())
-  updatedAt     DateTime           @updatedAt
-  user          User               @relation(fields: [userId], references: [id], onDelete: Cascade)
-  credentials   DeviceCredential[]
-  repositories  Repository[]
-  jobs          Job[]
-  auditEvents   AuditEvent[]
+  id           String             @id @default(uuid()) @db.Uuid
+  userId       String             @db.Uuid
+  name         String             @db.VarChar(100)
+  platform     String             @db.VarChar(50)
+  architecture String             @db.VarChar(50)
+  agentVersion String             @db.VarChar(50)
+  status       DeviceStatus       @default(offline)
+  lastSeenAt   DateTime?
+  createdAt    DateTime           @default(now())
+  updatedAt    DateTime           @updatedAt
+  user         User               @relation(fields: [userId], references: [id], onDelete: Cascade)
+  credentials  DeviceCredential[]
+  repositories Repository[]
+  jobs         Job[]
+  auditEvents  AuditEvent[]
 
   @@index([userId])
   @@index([status, lastSeenAt])

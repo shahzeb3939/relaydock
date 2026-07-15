@@ -11,6 +11,11 @@ export interface Session {
   csrfToken: string;
 }
 
+export interface AuthConfig {
+  google: boolean;
+  allowRegistration: boolean;
+}
+
 export type DeviceStatus = 'online' | 'offline' | 'revoked';
 
 export interface Device {
@@ -117,4 +122,5 @@ export interface JobFilters {
   deviceId?: string;
   repositoryId?: string;
   status?: JobStatus;
+  limit?: number;
 }

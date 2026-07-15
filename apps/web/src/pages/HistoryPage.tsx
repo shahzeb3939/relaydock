@@ -22,7 +22,7 @@ export function HistoryPage() {
   const jobsQuery = useQuery({
     queryKey: queryKeys.jobs(filters),
     queryFn: () => api.jobs(filters),
-    refetchInterval: 15_000,
+    refetchInterval: 30_000,
   });
 
   if (jobsQuery.isPending) return <PageLoader label="Loading job history…" />;

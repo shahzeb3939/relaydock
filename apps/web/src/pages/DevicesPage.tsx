@@ -209,7 +209,7 @@ export function DevicesPage() {
   const devicesQuery = useQuery({
     queryKey: queryKeys.devices,
     queryFn: api.devices,
-    refetchInterval: 15_000,
+    refetchInterval: 30_000,
   });
   const pairingMutation = useMutation({ mutationFn: api.pairDevice, onSuccess: setPairing });
   const revokeMutation = useMutation({

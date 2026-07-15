@@ -7,6 +7,10 @@ import { AppError } from '../lib/errors.js';
 import type { DatabaseClient } from '../prisma.js';
 
 const CSRF_COOKIE = 'relaydock_csrf';
+// Skip refreshing a session's lastUsedAt if it was touched within this window.
+// Chatty clients (polling, live streams) otherwise trigger a write on every
+// authenticated request; this keeps lastUsedAt useful while avoiding that churn.
+const LAST_USED_REFRESH_MS = 60_000;
 
 export interface AuthContext {
   sessionId: string;
@@ -52,11 +56,19 @@ export class SessionService {
       throw new AppError(401, 'AUTHENTICATION_REQUIRED', 'Sign in to continue.');
     }
 
+    const now = new Date();
     const session = await this.database.session.findUnique({
       where: { tokenHash: hashOpaqueToken(rawToken, this.environment.SESSION_SECRET) },
-      include: { user: { select: { id: true, email: true, createdAt: true } } },
+      select: {
+        id: true,
+        csrfTokenHash: true,
+        revokedAt: true,
+        expiresAt: true,
+        lastUsedAt: true,
+        user: { select: { id: true, email: true, createdAt: true } },
+      },
     });
-    if (session === null || session.revokedAt !== null || session.expiresAt <= new Date()) {
+    if (session === null || session.revokedAt !== null || session.expiresAt <= now) {
       throw new AppError(401, 'SESSION_INVALID', 'The session has expired. Sign in again.');
     }
 
@@ -65,9 +77,16 @@ export class SessionService {
       csrfTokenHash: session.csrfTokenHash,
       user: session.user,
     };
-    void this.database.session
-      .update({ where: { id: session.id }, data: { lastUsedAt: new Date() } })
-      .catch((error: unknown) => request.log.warn({ err: error }, 'could not update session use'));
+    // Refresh lastUsedAt lazily. updateMany returns only a row count, so unlike
+    // update() it reads nothing back; the throttle skips the write entirely for
+    // requests that arrive within LAST_USED_REFRESH_MS of the previous one.
+    if (now.getTime() - session.lastUsedAt.getTime() > LAST_USED_REFRESH_MS) {
+      void this.database.session
+        .updateMany({ where: { id: session.id }, data: { lastUsedAt: now } })
+        .catch((error: unknown) =>
+          request.log.warn({ err: error }, 'could not update session use'),
+        );
+    }
     return request.auth;
   }
 

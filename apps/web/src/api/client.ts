@@ -1,5 +1,6 @@
 import type {
   Action,
+  AuthConfig,
   CreateActionInput,
   CreateRepositoryInput,
   Device,
@@ -122,6 +123,9 @@ export const api = {
   logout() {
     return request<void>('/auth/logout', { method: 'POST' });
   },
+  authConfig() {
+    return request<AuthConfig>('/auth/config');
+  },
   async devices() {
     return (await request<{ devices: Device[] }>('/devices')).devices;
   },
@@ -199,6 +203,7 @@ export const api = {
       deviceId: filters.deviceId,
       repositoryId: filters.repositoryId,
       status: filters.status,
+      limit: filters.limit === undefined ? undefined : String(filters.limit),
     });
     return (await request<{ jobs: Job[] }>(`/jobs${suffix}`)).jobs;
   },

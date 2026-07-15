@@ -15,7 +15,7 @@ const queryClient = new QueryClient({
         const status = error instanceof Error && 'status' in error ? Number(error.status) : 0;
         return status !== 401 && status !== 403 && status !== 404 && failureCount < 2;
       },
-      staleTime: 5_000,
+      staleTime: 30_000,
     },
     mutations: { retry: false },
   },
