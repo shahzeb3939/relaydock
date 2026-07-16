@@ -1310,8 +1310,18 @@ select:focus-visible,
   height: 100%;
 }
 
-.terminal-mount .xterm-viewport {
+/* The finger lands on .xterm-screen (the text layer), so pan-y must live there
+   for the browser to allow the vertical drag that TerminalView forwards to the
+   scroll container; overscroll-behavior stops momentum from chaining to the
+   page at the edges. */
+.terminal-mount,
+.terminal-mount .xterm,
+.terminal-mount .xterm-screen {
   touch-action: pan-y;
+}
+
+.terminal-mount .xterm-viewport {
+  overscroll-behavior: contain;
 }
 
 .terminal-keyboard-button {
