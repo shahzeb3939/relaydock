@@ -1,5 +1,6 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { useEffect, useState } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Job } from '../api/types';
 import { createInputSequenceSeed, useJobSocket } from './useJobSocket';
@@ -75,10 +76,18 @@ function message(type: string, payload: object) {
 
 function Probe() {
   const socket = useJobSocket(job, [{ sequence: 7, stream: 'stdout', data: 'retained\n' }], true);
+  // Mirror how TerminalView drains output: paint the retained chunks once, then
+  // append every streamed chunk delivered through the imperative sink.
+  const [output, setOutput] = useState('');
+  const { initialChunks, subscribeOutput } = socket;
+  useEffect(() => {
+    setOutput(initialChunks.map((chunk) => chunk.data).join(''));
+    return subscribeOutput((chunk) => setOutput((current) => current + chunk.data));
+  }, [initialChunks, subscribeOutput]);
   return (
     <div>
       <span data-testid="connection">{socket.connection}</span>
-      <pre data-testid="output">{socket.chunks.map((chunk) => chunk.data).join('')}</pre>
+      <pre data-testid="output">{output}</pre>
       <button type="button" onClick={() => socket.sendInput('y\r')}>
         Input
       </button>

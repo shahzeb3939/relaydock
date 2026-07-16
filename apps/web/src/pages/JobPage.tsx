@@ -173,7 +173,8 @@ function ConnectedJobConsole({
           <ConnectionBadge connection={socket.connection} terminal={terminal} />
         </header>
         <TerminalView
-          chunks={socket.chunks}
+          initialChunks={socket.initialChunks}
+          subscribeOutput={socket.subscribeOutput}
           interactive={job.interactive}
           inputEnabled={acceptsInput}
           onInput={(data) => {
@@ -183,7 +184,7 @@ function ConnectedJobConsole({
             if (active) socket.sendResize(columns, rows);
           }}
         />
-        {socket.chunks.length === 0 && (
+        {!socket.hasOutput && (
           <div className="terminal-empty">
             {active ? (
               <>

@@ -12,7 +12,9 @@ import type { Job, OutputChunk } from '../api/types';
 export type ConnectionState = 'connecting' | 'connected' | 'reconnecting' | 'offline' | 'closed';
 
 interface JobSocketState {
-  chunks: OutputChunk[];
+  initialChunks: OutputChunk[];
+  subscribeOutput: (sink: (chunk: OutputChunk) => void) => () => void;
+  hasOutput: boolean;
   connection: ConnectionState;
   status: JobStatus;
   exitCode: number | null;
@@ -50,7 +52,14 @@ export function useJobSocket(
   enabled = true,
 ): JobSocketState {
   const queryClient = useQueryClient();
-  const [chunks, setChunks] = useState(() => uniqueSortedChunks(initialChunks));
+  // Terminal output is a high-frequency stream: a job left running for hours can
+  // emit hundreds of thousands of chunks. Holding them in React state made every
+  // chunk an O(n) array copy plus a re-render — O(n^2) work and unbounded memory
+  // over a long session, which froze the page. Instead we hand each chunk to an
+  // imperative sink (the xterm instance, which keeps its own bounded scrollback)
+  // and keep only low-frequency status in React state.
+  const [initialSortedChunks] = useState(() => uniqueSortedChunks(initialChunks));
+  const [hasOutput, setHasOutput] = useState(initialSortedChunks.length > 0);
   const [connection, setConnection] = useState<ConnectionState>(
     navigator.onLine ? 'connecting' : 'offline',
   );
@@ -68,16 +77,45 @@ export function useJobSocket(
   const awaitingReplayRef = useRef(false);
   const replayBatchCountRef = useRef(0);
   const latestSizeRef = useRef<{ columns: number; rows: number } | null>(null);
-  const seenSequencesRef = useRef(new Set(initialChunks.map((chunk) => chunk.sequence)));
+  const hasOutputRef = useRef(initialSortedChunks.length > 0);
+  // Output arrives on a single ordered stream and every reconnect resubscribes
+  // from lastSequence, so a monotonic high-water mark deduplicates replay without
+  // a per-sequence Set that would grow for the whole life of the job.
   const lastSequenceRef = useRef(
-    initialChunks.reduce((maximum, chunk) => Math.max(maximum, chunk.sequence), -1),
+    initialSortedChunks.reduce((maximum, chunk) => Math.max(maximum, chunk.sequence), -1),
   );
+  const outputSinkRef = useRef<((chunk: OutputChunk) => void) | null>(null);
+  const pendingChunksRef = useRef<OutputChunk[]>([]);
 
   const send = useCallback((message: ClientToServerMessage): boolean => {
     const socket = socketRef.current;
     if (!socket || socket.readyState !== WebSocket.OPEN) return false;
     socket.send(JSON.stringify(message));
     return true;
+  }, []);
+
+  const emitOutput = useCallback((chunk: OutputChunk) => {
+    if (!hasOutputRef.current) {
+      hasOutputRef.current = true;
+      setHasOutput(true);
+    }
+    const sink = outputSinkRef.current;
+    if (sink) sink(chunk);
+    // A viewer that has not attached yet (or is mid-reconnect) buffers here so
+    // no output is dropped; the buffer drains the moment a sink subscribes.
+    else pendingChunksRef.current.push(chunk);
+  }, []);
+
+  const subscribeOutput = useCallback((sink: (chunk: OutputChunk) => void) => {
+    outputSinkRef.current = sink;
+    if (pendingChunksRef.current.length > 0) {
+      const pending = pendingChunksRef.current;
+      pendingChunksRef.current = [];
+      for (const chunk of pending) sink(chunk);
+    }
+    return () => {
+      if (outputSinkRef.current === sink) outputSinkRef.current = null;
+    };
   }, []);
 
   const sendInput = useCallback(
@@ -185,11 +223,10 @@ export function useJobSocket(
 
         if (message.type === 'job.output') {
           const { sequence, stream, data } = message.payload;
-          if (seenSequencesRef.current.has(sequence)) return;
-          seenSequencesRef.current.add(sequence);
-          lastSequenceRef.current = Math.max(lastSequenceRef.current, sequence);
+          if (sequence <= lastSequenceRef.current) return;
+          lastSequenceRef.current = sequence;
           if (awaitingReplayRef.current) replayBatchCountRef.current += 1;
-          setChunks((current) => [...current, { sequence, stream, data }]);
+          emitOutput({ sequence, stream, data });
           return;
         }
 
@@ -301,7 +338,18 @@ export function useJobSocket(
       socket?.close(1000, 'Viewer left');
       socketRef.current = null;
     };
-  }, [enabled, job.id, job.status, queryClient]);
+  }, [emitOutput, enabled, job.id, job.status, queryClient]);
 
-  return { chunks, connection, status, exitCode, streamError, sendInput, sendResize, sendCancel };
+  return {
+    initialChunks: initialSortedChunks,
+    subscribeOutput,
+    hasOutput,
+    connection,
+    status,
+    exitCode,
+    streamError,
+    sendInput,
+    sendResize,
+    sendCancel,
+  };
 }

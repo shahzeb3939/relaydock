@@ -4,13 +4,15 @@ import { useEffect, useRef } from 'react';
 import type { OutputChunk } from '../api/types';
 
 export function TerminalView({
-  chunks,
+  initialChunks,
+  subscribeOutput,
   interactive,
   inputEnabled,
   onInput,
   onResize,
 }: {
-  chunks: OutputChunk[];
+  initialChunks: OutputChunk[];
+  subscribeOutput: (sink: (chunk: OutputChunk) => void) => () => void;
   interactive: boolean;
   inputEnabled: boolean;
   onInput: (data: string) => void;
@@ -18,12 +20,15 @@ export function TerminalView({
 }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const terminalRef = useRef<Terminal | null>(null);
-  const renderedChunkCountRef = useRef(0);
   const onInputRef = useRef(onInput);
   const onResizeRef = useRef(onResize);
+  const initialChunksRef = useRef(initialChunks);
+  const subscribeOutputRef = useRef(subscribeOutput);
 
   onInputRef.current = onInput;
   onResizeRef.current = onResize;
+  initialChunksRef.current = initialChunks;
+  subscribeOutputRef.current = subscribeOutput;
 
   useEffect(() => {
     const element = containerRef.current;
@@ -59,6 +64,15 @@ export function TerminalView({
     terminal.open(element);
     terminalRef.current = terminal;
 
+    // Paint retained output once, then stream every subsequent chunk straight
+    // into xterm. xterm buffers and renders writes on its own frame loop and
+    // caps history at `scrollback`, so this stays O(1) per chunk and bounded in
+    // memory no matter how long the job runs.
+    for (const chunk of initialChunksRef.current) terminal.write(chunk.data);
+    const unsubscribe = subscribeOutputRef.current((chunk) => {
+      terminalRef.current?.write(chunk.data);
+    });
+
     const fitAndReport = () => {
       try {
         fit.fit();
@@ -74,11 +88,11 @@ export function TerminalView({
 
     return () => {
       window.clearTimeout(timer);
+      unsubscribe();
       dataSubscription.dispose();
       resizeObserver.disconnect();
       terminal.dispose();
       terminalRef.current = null;
-      renderedChunkCountRef.current = 0;
     };
   }, []);
 
@@ -88,16 +102,6 @@ export function TerminalView({
     terminal.options.cursorBlink = inputEnabled;
     terminal.options.disableStdin = !inputEnabled;
   }, [inputEnabled]);
-
-  useEffect(() => {
-    const terminal = terminalRef.current;
-    if (!terminal) return;
-    for (let index = renderedChunkCountRef.current; index < chunks.length; index += 1) {
-      const chunk = chunks[index];
-      if (chunk) terminal.write(chunk.data);
-    }
-    renderedChunkCountRef.current = chunks.length;
-  }, [chunks]);
 
   return (
     <div className="terminal-wrap">
