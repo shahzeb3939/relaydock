@@ -1,0 +1,35 @@
+# Optional overlay that puts Caddy in front of the web container for automatic
+# HTTPS (Let's Encrypt). Use it when self-hosting the always-on relay — e.g. on
+# an Oracle Cloud Always Free VM — so the agent and browser get a valid wss://
+# endpoint that stays open for the whole session (unlike a serverless Function,
+# which is torn down at its max duration).
+#
+# Bring the full stack up with:
+#   docker compose --profile app -f docker-compose.yml -f docker-compose.caddy.yml up -d --build
+#
+# Requires RELAYDOCK_DOMAIN in .env — the public hostname that resolves to this
+# host. Open only TCP 80 and 443 to the internet; the web container's own host
+# port should stay on loopback (set RELAYDOCK_HTTP_PORT=127.0.0.1:8080 in .env).
+name: relaydock
+
+services:
+  caddy:
+    profiles: ['app']
+    image: caddy:2-alpine
+    restart: unless-stopped
+    depends_on:
+      web:
+        condition: service_started
+    ports:
+      - '80:80'
+      - '443:443'
+    environment:
+      RELAYDOCK_DOMAIN: ${RELAYDOCK_DOMAIN:?set RELAYDOCK_DOMAIN in .env}
+    volumes:
+      - ./docker/Caddyfile:/etc/caddy/Caddyfile:ro
+      - relaydock-caddy-data:/data
+      - relaydock-caddy-config:/config
+
+volumes:
+  relaydock-caddy-data:
+  relaydock-caddy-config:
