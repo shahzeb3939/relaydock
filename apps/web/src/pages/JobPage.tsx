@@ -109,10 +109,13 @@ function ConnectedJobConsole({
   const cardRef = useRef<HTMLElement>(null);
   // The input keys stay mounted for the whole interactive-and-running window, so
   // a brief reconnect no longer makes them vanish; `acceptsInput` only decides
-  // whether they can send right now.
+  // whether they can send right now. Keep them live through transient
+  // connecting/reconnecting/offline states (common on mobile) — a send safely
+  // no-ops when the socket isn't open — and only disable once it's truly closed,
+  // so a network blip never freezes an interactive prompt mid-answer.
   const showControls =
     job.interactive && ['running', 'waiting_for_input'].includes(socket.status);
-  const acceptsInput = showControls && socket.connection === 'connected';
+  const acceptsInput = showControls && socket.connection !== 'closed';
   const cancelMutation = useMutation({
     mutationFn: async () => {
       if (!socket.sendCancel()) await api.cancelJob(job.id);

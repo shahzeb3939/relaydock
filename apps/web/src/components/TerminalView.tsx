@@ -3,6 +3,7 @@ import { FitAddon } from '@xterm/addon-fit';
 import { Terminal } from '@xterm/xterm';
 import { useEffect, useRef } from 'react';
 import type { OutputChunk } from '../api/types';
+import { scrollToCursorKeys } from '../lib/terminalScroll';
 import { TerminalKeys } from './TerminalKeys';
 
 export function TerminalView({
@@ -28,11 +29,13 @@ export function TerminalView({
   const onResizeRef = useRef(onResize);
   const initialChunksRef = useRef(initialChunks);
   const subscribeOutputRef = useRef(subscribeOutput);
+  const inputEnabledRef = useRef(inputEnabled);
 
   onInputRef.current = onInput;
   onResizeRef.current = onResize;
   initialChunksRef.current = initialChunks;
   subscribeOutputRef.current = subscribeOutput;
+  inputEnabledRef.current = inputEnabled;
 
   useEffect(() => {
     const element = containerRef.current;
@@ -78,6 +81,53 @@ export function TerminalView({
       // Canvas unavailable (very old browser); the DOM renderer still works.
     }
 
+    // A fullscreen TUI runs in the alternate screen buffer, which has no
+    // scrollback: a laptop mouse wheel is translated into cursor keys to move the
+    // app's selection, but a touch swipe emits no wheel events, so a phone can
+    // neither scroll nor navigate. Track the buffer and, while it's the alternate
+    // one, turn vertical swipes into the same cursor-key presses. The normal
+    // buffer keeps xterm's native scroll untouched.
+    let altActive = terminal.buffer.active.type === 'alternate';
+    const bufferSubscription = terminal.buffer.onBufferChange(() => {
+      altActive = terminal.buffer.active.type === 'alternate';
+    });
+    let lastTouchY: number | null = null;
+    let carriedPx = 0;
+    const onTouchStart = (event: TouchEvent) => {
+      // Only single-finger drags in the alternate buffer, and only when input can
+      // actually reach the PTY; otherwise leave the touch to its default handling.
+      const touch = event.touches[0];
+      if (!altActive || !inputEnabledRef.current || event.touches.length !== 1 || !touch) {
+        lastTouchY = null;
+        return;
+      }
+      lastTouchY = touch.clientY;
+      carriedPx = 0;
+    };
+    const onTouchMove = (event: TouchEvent) => {
+      const touch = event.touches[0];
+      if (lastTouchY === null || event.touches.length !== 1 || !touch) return;
+      // We're driving the TUI, not the page — stop native scroll/rubber-banding.
+      event.preventDefault();
+      const currentY = touch.clientY;
+      carriedPx += lastTouchY - currentY; // upward drag is positive
+      lastTouchY = currentY;
+      const rowHeightPx = element.clientHeight / Math.max(terminal.rows, 1);
+      const { data, remainderPx } = scrollToCursorKeys(carriedPx, rowHeightPx);
+      if (data) {
+        onInputRef.current(data);
+        carriedPx = remainderPx;
+      }
+    };
+    const endTouch = () => {
+      lastTouchY = null;
+      carriedPx = 0;
+    };
+    element.addEventListener('touchstart', onTouchStart, { passive: true });
+    element.addEventListener('touchmove', onTouchMove, { passive: false });
+    element.addEventListener('touchend', endTouch, { passive: true });
+    element.addEventListener('touchcancel', endTouch, { passive: true });
+
     // Paint retained output once, then stream every subsequent chunk straight
     // into xterm. xterm buffers and renders writes on its own frame loop and
     // caps history at `scrollback`, so this stays O(1) per chunk and bounded in
@@ -105,6 +155,11 @@ export function TerminalView({
       window.clearTimeout(timer);
       unsubscribe();
       dataSubscription.dispose();
+      bufferSubscription.dispose();
+      element.removeEventListener('touchstart', onTouchStart);
+      element.removeEventListener('touchmove', onTouchMove);
+      element.removeEventListener('touchend', endTouch);
+      element.removeEventListener('touchcancel', endTouch);
       resizeObserver.disconnect();
       terminal.dispose();
       terminalRef.current = null;
