@@ -1296,6 +1296,12 @@ select:focus-visible,
   white-space: nowrap;
 }
 
+.terminal-region {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
 .terminal-wrap {
   position: relative;
   height: min(58vh, 590px);
@@ -1310,33 +1316,115 @@ select:focus-visible,
   height: 100%;
 }
 
-/* The finger lands on .xterm-screen (the text layer), so pan-y must live there
-   for the browser to allow the vertical drag that TerminalView forwards to the
-   scroll container; overscroll-behavior stops momentum from chaining to the
-   page at the edges. */
-.terminal-mount,
-.terminal-mount .xterm,
-.terminal-mount .xterm-screen {
-  touch-action: pan-y;
+/* On touch devices the finger lands on .xterm-screen (the text layer), which is
+   painted on top of the scrollable .xterm-viewport. Letting pointer events fall
+   through to the viewport hands scrolling to xterm's own native scroll path —
+   the same one the desktop scrollbar uses — so it stays smooth and never fights
+   streaming output the way manual scrollTop manipulation did. */
+@media (pointer: coarse) {
+  .terminal-mount .xterm-screen {
+    pointer-events: none;
+  }
 }
 
 .terminal-mount .xterm-viewport {
+  touch-action: pan-y;
   overscroll-behavior: contain;
 }
 
-.terminal-keyboard-button {
-  position: absolute;
-  right: 14px;
-  bottom: 13px;
-  min-height: 38px;
-  padding: 7px 11px;
+.terminal-keys {
+  display: flex;
+  gap: 6px;
+  padding: 8px 10px;
+  overflow-x: auto;
+  border-top: 1px solid #1c2925;
+  background: #0c1412;
+  scrollbar-width: none;
+}
+
+.terminal-keys::-webkit-scrollbar {
+  display: none;
+}
+
+.terminal-key {
+  flex: 0 0 auto;
+  min-width: 46px;
+  min-height: 40px;
+  padding: 0 12px;
   border: 1px solid #385149;
   border-radius: 8px;
   background: rgb(12 20 18 / 92%);
   color: var(--accent);
   cursor: pointer;
-  font-size: 0.7rem;
+  font-family: monospace;
+  font-size: 0.82rem;
   font-weight: 700;
+  /* Kill the tap delay and double-tap zoom so a key registers instantly. */
+  touch-action: manipulation;
+}
+
+.terminal-key:active {
+  background: #12302a;
+}
+
+.terminal-key:disabled {
+  cursor: not-allowed;
+  opacity: 0.4;
+}
+
+.terminal-key--wide {
+  min-width: auto;
+  font-family: inherit;
+  font-size: 0.72rem;
+}
+
+.terminal-tool-button {
+  display: inline-flex;
+  width: 30px;
+  height: 30px;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid #2a3b35;
+  border-radius: 7px;
+  background: transparent;
+  color: #9fb4ac;
+  cursor: pointer;
+  font-size: 0.9rem;
+  line-height: 1;
+  touch-action: manipulation;
+}
+
+.terminal-tool-button:hover {
+  border-color: #385149;
+  color: var(--accent);
+}
+
+.terminal-card--fullscreen {
+  position: fixed;
+  top: 0;
+  right: 0;
+  left: 0;
+  z-index: 200;
+  display: flex;
+  height: 100vh;
+  height: 100dvh;
+  flex-direction: column;
+  margin: 0;
+  border: 0;
+  border-radius: 0;
+}
+
+.terminal-card--fullscreen .terminal-region {
+  flex: 1;
+}
+
+.terminal-card--fullscreen .terminal-wrap {
+  height: auto;
+  /* Override the 330/360px floor from the base rules so the terminal can shrink
+     on short/landscape viewports; without this, flex:1 can't compress it and the
+     key bar gets pushed off the bottom edge and clipped by the card's overflow. */
+  min-height: 0;
+  flex: 1;
 }
 
 .terminal-empty {

@@ -3,12 +3,14 @@ import { FitAddon } from '@xterm/addon-fit';
 import { Terminal } from '@xterm/xterm';
 import { useEffect, useRef } from 'react';
 import type { OutputChunk } from '../api/types';
+import { TerminalKeys } from './TerminalKeys';
 
 export function TerminalView({
   initialChunks,
   subscribeOutput,
   interactive,
   inputEnabled,
+  showControls,
   onInput,
   onResize,
 }: {
@@ -16,6 +18,7 @@ export function TerminalView({
   subscribeOutput: (sink: (chunk: OutputChunk) => void) => () => void;
   interactive: boolean;
   inputEnabled: boolean;
+  showControls: boolean;
   onInput: (data: string) => void;
   onResize: (columns: number, rows: number) => void;
 }) {
@@ -96,42 +99,11 @@ export function TerminalView({
     resizeObserver.observe(element);
     const dataSubscription = terminal.onData((data) => onInputRef.current(data));
 
-    // xterm layers the rendered text (.xterm-screen) on top of its scroll
-    // container (.xterm-viewport), so a finger drag lands on a non-scrollable
-    // element and the browser scrolls the page instead of the output. Forward
-    // single-finger drags to the viewport ourselves, handing the gesture back to
-    // the page only once the output is scrolled to its edge so the view never
-    // feels trapped.
-    const viewport = element.querySelector<HTMLElement>('.xterm-viewport');
-    let touchStartY = 0;
-    let touchStartScroll = 0;
-    const onTouchStart = (event: TouchEvent) => {
-      if (!viewport || event.touches.length !== 1) return;
-      touchStartY = event.touches[0]?.clientY ?? 0;
-      touchStartScroll = viewport.scrollTop;
-    };
-    const onTouchMove = (event: TouchEvent) => {
-      if (!viewport || event.touches.length !== 1) return;
-      const deltaY = (event.touches[0]?.clientY ?? 0) - touchStartY;
-      const maxScroll = viewport.scrollHeight - viewport.clientHeight;
-      const atTop = viewport.scrollTop <= 0;
-      const atBottom = viewport.scrollTop >= maxScroll - 0.5;
-      // Nothing left to reveal above the top (or below the bottom): let the page
-      // take the gesture instead of swallowing it.
-      if ((atTop && deltaY > 0) || (atBottom && deltaY < 0)) return;
-      viewport.scrollTop = touchStartScroll - deltaY;
-      event.preventDefault();
-    };
-    element.addEventListener('touchstart', onTouchStart, { passive: true });
-    element.addEventListener('touchmove', onTouchMove, { passive: false });
-
     const timer = window.setTimeout(fitAndReport, 0);
 
     return () => {
       window.clearTimeout(timer);
       unsubscribe();
-      element.removeEventListener('touchstart', onTouchStart);
-      element.removeEventListener('touchmove', onTouchMove);
       dataSubscription.dispose();
       resizeObserver.disconnect();
       terminal.dispose();
@@ -146,22 +118,29 @@ export function TerminalView({
     terminal.options.disableStdin = !inputEnabled;
   }, [inputEnabled]);
 
+  const sendKey = (data: string) => {
+    onInputRef.current(data);
+    // Jump to the newest output so the key's effect is visible even if the user
+    // had scrolled up into the history.
+    terminalRef.current?.scrollToBottom();
+  };
+
   return (
-    <div className="terminal-wrap">
-      <div
-        ref={containerRef}
-        className="terminal-mount"
-        role="log"
-        aria-label="Job terminal output"
-      />
-      {inputEnabled && (
-        <button
-          className="terminal-keyboard-button"
-          type="button"
-          onClick={() => terminalRef.current?.focus()}
-        >
-          Focus keyboard
-        </button>
+    <div className="terminal-region">
+      <div className="terminal-wrap">
+        <div
+          ref={containerRef}
+          className="terminal-mount"
+          role="log"
+          aria-label="Job terminal output"
+        />
+      </div>
+      {showControls && (
+        <TerminalKeys
+          onKey={sendKey}
+          onFocusKeyboard={() => terminalRef.current?.focus()}
+          disabled={!inputEnabled}
+        />
       )}
     </div>
   );
