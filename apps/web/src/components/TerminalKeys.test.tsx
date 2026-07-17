@@ -11,16 +11,8 @@ describe('TerminalKeys', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Up arrow' }));
     fireEvent.click(screen.getByRole('button', { name: 'Down arrow' }));
     fireEvent.click(screen.getByRole('button', { name: 'Enter' }));
-    fireEvent.click(screen.getByRole('button', { name: 'Escape' }));
-    fireEvent.click(screen.getByRole('button', { name: 'Interrupt (Ctrl+C)' }));
 
-    expect(onKey.mock.calls.map((call) => call[0])).toEqual([
-      '\x1b[A',
-      '\x1b[B',
-      '\r',
-      '\x1b',
-      '\x03',
-    ]);
+    expect(onKey.mock.calls.map((call) => call[0])).toEqual(['\x1b[A', '\x1b[B', '\r']);
   });
 
   it('summons the on-screen keyboard without emitting any input', () => {

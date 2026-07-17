@@ -1399,7 +1399,11 @@ select:focus-visible,
   color: var(--accent);
 }
 
-.terminal-card--fullscreen {
+/* Doubled class (.terminal-card.terminal-card--fullscreen) raises specificity to
+   (0,2,0) so these win over the mobile @media rule `.terminal-card { margin-inline:
+   -14px }` (0,1,0), which otherwise applies later in source order and pushes the
+   fixed card 14px off each edge — clipping the first/last column of the terminal. */
+.terminal-card.terminal-card--fullscreen {
   position: fixed;
   top: 0;
   right: 0;
@@ -1414,11 +1418,11 @@ select:focus-visible,
   border-radius: 0;
 }
 
-.terminal-card--fullscreen .terminal-region {
+.terminal-card.terminal-card--fullscreen .terminal-region {
   flex: 1;
 }
 
-.terminal-card--fullscreen .terminal-wrap {
+.terminal-card.terminal-card--fullscreen .terminal-wrap {
   height: auto;
   /* Override the 330/360px floor from the base rules so the terminal can shrink
      on short/landscape viewports; without this, flex:1 can't compress it and the

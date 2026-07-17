@@ -6,8 +6,6 @@ export const TERMINAL_KEYS = [
   { label: '↑', title: 'Up arrow', data: '\x1b[A' },
   { label: '↓', title: 'Down arrow', data: '\x1b[B' },
   { label: 'Enter', title: 'Enter', data: '\r' },
-  { label: 'Esc', title: 'Escape', data: '\x1b' },
-  { label: 'Ctrl C', title: 'Interrupt (Ctrl+C)', data: '\x03' },
 ] as const;
 
 export function TerminalKeys({
