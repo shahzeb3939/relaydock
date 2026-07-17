@@ -40,11 +40,12 @@ model User {
   googleSub    String?       @unique @db.VarChar(255)
   createdAt    DateTime      @default(now())
   updatedAt    DateTime      @updatedAt
-  sessions     Session[]
-  devices      Device[]
-  pairingCodes PairingCode[]
-  jobs         Job[]
-  auditEvents  AuditEvent[]
+  sessions          Session[]
+  devices           Device[]
+  pairingCodes      PairingCode[]
+  jobs              Job[]
+  auditEvents       AuditEvent[]
+  pushSubscriptions PushSubscription[]
 }
 
 model Session {
@@ -208,4 +209,22 @@ model AuditEvent {
   @@index([userId, createdAt])
   @@index([deviceId, createdAt])
   @@index([action, createdAt])
+}
+
+// A browser's Web Push endpoint (one row per browser/subscription), used to
+// deliver job notifications when the user is not watching a live session. Keyed
+// to the owning user; a user may have many browsers, so the unique key is the
+// push endpoint itself. Cascade-deleted with the user, mirroring Session.
+model PushSubscription {
+  id             String    @id @default(uuid()) @db.Uuid
+  userId         String    @db.Uuid
+  endpoint       String    @unique @db.VarChar(2048)
+  p256dh         String    @db.VarChar(255)
+  auth           String    @db.VarChar(255)
+  userAgent      String?   @db.VarChar(500)
+  createdAt      DateTime  @default(now())
+  lastNotifiedAt DateTime?
+  user           User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
 }

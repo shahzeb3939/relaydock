@@ -16,12 +16,14 @@ import type { DatabaseClient } from './prisma.js';
 import { registerAuthRoutes } from './routes/auth.js';
 import { registerDeviceRoutes } from './routes/devices.js';
 import { registerJobRoutes } from './routes/jobs.js';
+import { registerPushRoutes } from './routes/push.js';
 import { registerRepositoryRoutes } from './routes/repositories.js';
 import { registerWebSocketRoutes } from './routes/websockets.js';
 import { AuditService } from './services/audit.js';
 import { ConnectionHub, RepositoryValidationBroker } from './services/connections.js';
 import { JobService } from './services/jobs.js';
 import { MaintenanceService } from './services/maintenance.js';
+import { PushService } from './services/push.js';
 import { SessionService } from './services/sessions.js';
 
 export interface BuildServerOptions {
@@ -110,7 +112,18 @@ export async function buildServer(options: BuildServerOptions = {}): Promise<Rel
   });
   await connections.start();
   const validations = new RepositoryValidationBroker(connections, environment);
-  const jobs = new JobService(database, connections, environment.MAX_RETAINED_OUTPUT_BYTES);
+  const push = new PushService({
+    database,
+    logger: app.log,
+    vapid: environment.pushEnabled
+      ? {
+          publicKey: environment.VAPID_PUBLIC_KEY as string,
+          privateKey: environment.VAPID_PRIVATE_KEY as string,
+          subject: environment.VAPID_SUBJECT as string,
+        }
+      : null,
+  });
+  const jobs = new JobService(database, connections, environment.MAX_RETAINED_OUTPUT_BYTES, push);
   const maintenance = new MaintenanceService(database, connections, environment, app.log);
 
   const requireAuth = async (request: FastifyRequest, _reply: FastifyReply): Promise<void> => {
@@ -173,6 +186,7 @@ export async function buildServer(options: BuildServerOptions = {}): Promise<Rel
     requireCsrf,
   });
   registerJobRoutes(app, { database, audit, connections, jobs, requireAuth, requireCsrf });
+  registerPushRoutes(app, { database, push, audit, requireAuth, requireCsrf });
   registerWebSocketRoutes(app, {
     database,
     environment,

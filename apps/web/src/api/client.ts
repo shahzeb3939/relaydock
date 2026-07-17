@@ -9,6 +9,7 @@ import type {
   JobFilters,
   OutputChunk,
   PairingCode,
+  PushConfig,
   Repository,
   Session,
 } from './types';
@@ -125,6 +126,15 @@ export const api = {
   },
   authConfig() {
     return request<AuthConfig>('/auth/config');
+  },
+  pushConfig() {
+    return request<PushConfig>('/push/config');
+  },
+  subscribePush(subscription: { endpoint: string; keys: { p256dh: string; auth: string } }) {
+    return request<{ ok: true }>('/push/subscribe', { method: 'POST', body: subscription });
+  },
+  unsubscribePush(endpoint: string) {
+    return request<void>('/push/subscribe', { method: 'DELETE', body: { endpoint } });
   },
   async devices() {
     return (await request<{ devices: Device[] }>('/devices')).devices;
