@@ -16,6 +16,11 @@ export interface AuthConfig {
   allowRegistration: boolean;
 }
 
+export interface PushConfig {
+  enabled: boolean;
+  publicKey: string | null;
+}
+
 export type DeviceStatus = 'online' | 'offline' | 'revoked';
 
 export interface Device {

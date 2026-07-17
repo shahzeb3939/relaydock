@@ -125,6 +125,12 @@ const environmentSchema = z
     GOOGLE_CLIENT_ID: z.string().min(1).optional(),
     GOOGLE_CLIENT_SECRET: z.string().min(1).optional(),
     GOOGLE_ALLOWED_EMAIL_DOMAINS: commaSeparatedEmailDomains.optional(),
+    // Web Push (VAPID) keys enable job notifications. Optional: when unset, the
+    // push feature is inert. The private key is a secret; the public key is
+    // handed to browsers to build their subscription. See docs/notifications.md.
+    VAPID_PUBLIC_KEY: z.string().min(1).optional(),
+    VAPID_PRIVATE_KEY: z.string().min(1).optional(),
+    VAPID_SUBJECT: z.string().min(1).optional(),
   })
   .superRefine((environment, context) => {
     if (environment.NODE_ENV === 'production' && environment.ALLOWED_ORIGINS.length === 0) {
@@ -174,11 +180,38 @@ const environmentSchema = z
           'PUBLIC_URL is required when Google sign-in is enabled; it builds the OAuth redirect URI',
       });
     }
+    // The three VAPID values are all-or-nothing: a partial set cannot sign a
+    // push request, so surface it as a configuration error rather than silently
+    // disabling notifications.
+    const vapidSet = [
+      environment.VAPID_PUBLIC_KEY,
+      environment.VAPID_PRIVATE_KEY,
+      environment.VAPID_SUBJECT,
+    ].filter((value) => value !== undefined).length;
+    if (vapidSet > 0 && vapidSet < 3) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['VAPID_PRIVATE_KEY'],
+        message:
+          'VAPID_PUBLIC_KEY, VAPID_PRIVATE_KEY, and VAPID_SUBJECT must all be set to enable push notifications',
+      });
+    }
+    if (
+      environment.VAPID_SUBJECT !== undefined &&
+      !/^(mailto:|https:\/\/)/.test(environment.VAPID_SUBJECT)
+    ) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['VAPID_SUBJECT'],
+        message: 'VAPID_SUBJECT must be a mailto: address or an https:// URL',
+      });
+    }
   });
 
 export interface ServerEnvironment extends z.infer<typeof environmentSchema> {
   cookieSecure: boolean;
   googleEnabled: boolean;
+  pushEnabled: boolean;
 }
 
 export function parseServerEnvironment(source: NodeJS.ProcessEnv): ServerEnvironment {
@@ -215,6 +248,9 @@ export function parseServerEnvironment(source: NodeJS.ProcessEnv): ServerEnviron
     GOOGLE_CLIENT_SECRET: source.RELAYDOCK_GOOGLE_CLIENT_SECRET ?? source.GOOGLE_CLIENT_SECRET,
     GOOGLE_ALLOWED_EMAIL_DOMAINS:
       source.RELAYDOCK_GOOGLE_ALLOWED_EMAIL_DOMAINS ?? source.GOOGLE_ALLOWED_EMAIL_DOMAINS,
+    VAPID_PUBLIC_KEY: source.RELAYDOCK_VAPID_PUBLIC_KEY ?? source.VAPID_PUBLIC_KEY,
+    VAPID_PRIVATE_KEY: source.RELAYDOCK_VAPID_PRIVATE_KEY ?? source.VAPID_PRIVATE_KEY,
+    VAPID_SUBJECT: source.RELAYDOCK_VAPID_SUBJECT ?? source.VAPID_SUBJECT,
   };
   const environment = environmentSchema.parse(normalized);
   return {
@@ -222,5 +258,9 @@ export function parseServerEnvironment(source: NodeJS.ProcessEnv): ServerEnviron
     cookieSecure: environment.NODE_ENV === 'production',
     googleEnabled:
       environment.GOOGLE_CLIENT_ID !== undefined && environment.GOOGLE_CLIENT_SECRET !== undefined,
+    pushEnabled:
+      environment.VAPID_PUBLIC_KEY !== undefined &&
+      environment.VAPID_PRIVATE_KEY !== undefined &&
+      environment.VAPID_SUBJECT !== undefined,
   };
 }

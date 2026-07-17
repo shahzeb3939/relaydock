@@ -12,6 +12,7 @@ import { AppError } from '../lib/errors.js';
 import { serializeOutputChunk } from '../lib/serializers.js';
 import type { DatabaseClient } from '../prisma.js';
 import type { ConnectionHub } from './connections.js';
+import type { JobPushNotifier } from './push.js';
 
 export interface IncomingOutputChunk {
   sequence: number;
@@ -31,6 +32,7 @@ export class JobService {
     private readonly database: DatabaseClient,
     private readonly connections: ConnectionHub,
     private readonly maximumOutputBytes: number,
+    private readonly pushNotifier?: JobPushNotifier,
   ) {}
 
   async transitionFromAgent(
@@ -67,6 +69,19 @@ export class JobService {
       exitCode: updated.exitCode,
     });
     await this.connections.broadcastJob(updated.userId, jobId, message);
+    // Out-of-band push, so users are alerted even with no tab open. Only on a
+    // real status change — agent reconnects re-drive no-op self-transitions
+    // (e.g. waiting_for_input -> waiting_for_input) which must not re-alert. The
+    // notifier still ignores non-notify-worthy statuses and swallows failures.
+    if (updated.status !== current.status) {
+      this.pushNotifier?.notifyJobTransition({
+        id: updated.id,
+        userId: updated.userId,
+        status: updated.status,
+        exitCode: updated.exitCode,
+        repositoryId: updated.repositoryId,
+      });
+    }
     return updated;
   }
 
