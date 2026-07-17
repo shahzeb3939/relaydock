@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { api } from '../api/client';
 import { queryKeys } from '../api/queryKeys';
@@ -105,10 +105,14 @@ function ConnectedJobConsole({
   const socket = useJobSocket(job, initialChunks, isJobActive(job.status));
   const active = isJobActive(socket.status);
   const terminal = !active;
-  const acceptsInput =
-    job.interactive &&
-    ['running', 'waiting_for_input'].includes(socket.status) &&
-    socket.connection === 'connected';
+  const [fullscreen, setFullscreen] = useState(false);
+  const cardRef = useRef<HTMLElement>(null);
+  // The input keys stay mounted for the whole interactive-and-running window, so
+  // a brief reconnect no longer makes them vanish; `acceptsInput` only decides
+  // whether they can send right now.
+  const showControls =
+    job.interactive && ['running', 'waiting_for_input'].includes(socket.status);
+  const acceptsInput = showControls && socket.connection === 'connected';
   const cancelMutation = useMutation({
     mutationFn: async () => {
       if (!socket.sendCancel()) await api.cancelJob(job.id);
@@ -118,6 +122,44 @@ function ConnectedJobConsole({
       onRefresh();
     },
   });
+
+  useEffect(() => {
+    if (!fullscreen) return;
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    const onKeyDown = (event: KeyboardEvent) => {
+      // xterm captures Escape in the capture phase when the terminal is focused
+      // (it sends it to the PTY), so this only fires when focus is on the toolbar
+      // or key bar — exactly where exiting fullscreen makes sense.
+      if (event.key === 'Escape') {
+        setFullscreen(false);
+        return;
+      }
+      if (event.key !== 'Tab') return;
+      // Trap Tab inside the fullscreen card so focus can't land on page controls
+      // (e.g. the Cancel job button) hidden behind the opaque overlay.
+      const focusable = [
+        ...(cardRef.current?.querySelectorAll<HTMLElement>(
+          'button:not(:disabled), a[href], textarea:not(:disabled), [tabindex]:not([tabindex="-1"])',
+        ) ?? []),
+      ];
+      const first = focusable[0];
+      const last = focusable.at(-1);
+      if (!first || !last) return;
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault();
+        first.focus();
+      }
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => {
+      document.body.style.overflow = previousOverflow;
+      window.removeEventListener('keydown', onKeyDown);
+    };
+  }, [fullscreen]);
 
   return (
     <div className="page job-page">
@@ -160,7 +202,11 @@ function ConnectedJobConsole({
         <InlineAlert tone="danger">{socket.streamError}</InlineAlert>
       )}
 
-      <section className="terminal-card" aria-label="Terminal session">
+      <section
+        ref={cardRef}
+        className={`terminal-card${fullscreen ? ' terminal-card--fullscreen' : ''}`}
+        aria-label="Terminal session"
+      >
         <header className="terminal-toolbar">
           <div className="terminal-dots" aria-hidden="true">
             <span />
@@ -171,12 +217,23 @@ function ConnectedJobConsole({
             {job.repository?.name ?? 'repository'} — {job.id.slice(0, 8)}
           </span>
           <ConnectionBadge connection={socket.connection} terminal={terminal} />
+          <button
+            type="button"
+            className="terminal-tool-button"
+            onClick={() => setFullscreen((value) => !value)}
+            aria-pressed={fullscreen}
+            aria-label={fullscreen ? 'Exit fullscreen' : 'Fullscreen terminal'}
+            title={fullscreen ? 'Exit fullscreen' : 'Fullscreen terminal'}
+          >
+            {fullscreen ? '✕' : '⤢'}
+          </button>
         </header>
         <TerminalView
           initialChunks={socket.initialChunks}
           subscribeOutput={socket.subscribeOutput}
           interactive={job.interactive}
           inputEnabled={acceptsInput}
+          showControls={showControls}
           onInput={(data) => {
             socket.sendInput(data);
           }}
