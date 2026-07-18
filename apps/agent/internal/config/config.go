@@ -1,6 +1,8 @@
 package config
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -288,6 +290,48 @@ func ParseServerURL(raw string) (*url.URL, error) {
 	}
 	parsed.Path = strings.TrimRight(parsed.Path, "/")
 	return parsed, nil
+}
+
+// ServerSlug derives a stable, filesystem- and service-label-safe identifier for
+// a server URL. Agents paired with different servers use distinct slugs so their
+// configuration files and background services never collide — that is what lets a
+// single machine run one independent agent per RelayDock server. The slug combines
+// a readable form of the host (and any base path) with a short hash of the
+// canonical URL, so two distinct servers can never collapse to the same slug even
+// after the readable part is sanitised, while the same server always yields the
+// same slug (re-running the installer is idempotent).
+func ServerSlug(serverURL string) (string, error) {
+	parsed, err := ParseServerURL(serverURL)
+	if err != nil {
+		return "", err
+	}
+	canonical := parsed.String()
+
+	var builder strings.Builder
+	previousDash := false
+	for _, character := range strings.ToLower(parsed.Host + parsed.Path) {
+		if (character >= 'a' && character <= 'z') || (character >= '0' && character <= '9') {
+			builder.WriteRune(character)
+			previousDash = false
+			continue
+		}
+		if !previousDash {
+			builder.WriteByte('-')
+			previousDash = true
+		}
+	}
+	base := strings.Trim(builder.String(), "-")
+	const maxBase = 40
+	if len(base) > maxBase {
+		base = strings.Trim(base[:maxBase], "-")
+	}
+
+	sum := sha256.Sum256([]byte(canonical))
+	hash := hex.EncodeToString(sum[:])[:10]
+	if base == "" {
+		return "server-" + hash, nil
+	}
+	return base + "-" + hash, nil
 }
 
 func Endpoint(serverURL, endpoint string) (string, error) {
