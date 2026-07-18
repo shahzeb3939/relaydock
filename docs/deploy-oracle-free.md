@@ -5,7 +5,7 @@ browser, the server, and the agent. On Vercel the server runs as a serverless
 Function, and **Vercel closes a WebSocket when the Function reaches its max
 duration** (see [deployment.md](deployment.md)). That forced teardown is what
 causes the repeated "live connection was interrupted", the frozen/stuck view,
-and missing latest output — the browser *and* the agent get kicked on a timer
+and missing latest output — the browser _and_ the agent get kicked on a timer
 and spend part of every cycle reconnecting.
 
 The fix is to run the server as a normal always-on process. The repo already

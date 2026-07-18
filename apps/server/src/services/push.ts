@@ -178,9 +178,7 @@ export class PushService implements JobPushNotifier {
     });
     if (payload === null) return;
     const serialized = JSON.stringify(payload);
-    await Promise.all(
-      subscriptions.map((subscription) => this.sendOne(subscription, serialized)),
-    );
+    await Promise.all(subscriptions.map((subscription) => this.sendOne(subscription, serialized)));
   }
 
   private async sendOne(

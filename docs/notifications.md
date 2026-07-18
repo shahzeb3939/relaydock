@@ -9,11 +9,11 @@ the Home Screen first (see [iOS](#ios)).
 
 The server emits a push the moment a job transitions to one of:
 
-| Status              | Notification title            |
-| ------------------- | ----------------------------- |
-| `waiting_for_input` | **Waiting for your input**    |
+| Status              | Notification title                                                            |
+| ------------------- | ----------------------------------------------------------------------------- |
+| `waiting_for_input` | **Waiting for your input**                                                    |
 | `completed`         | **Job completed** (or `Job finished · exit N` when the exit code is non-zero) |
-| `failed`            | **Job failed**                |
+| `failed`            | **Job failed**                                                                |
 
 Deliberately **not** notified: `cancelled` (you triggered it) and
 `disconnected` (usually a transient blip the agent recovers from). The
@@ -44,11 +44,11 @@ commit it.
 3. Set three environment variables (repo-root `.env` for local, and the Vercel
    **api** service env for production):
 
-   | Variable            | Value                                                     |
-   | ------------------- | --------------------------------------------------------- |
-   | `VAPID_PUBLIC_KEY`  | the public key from step 1                                |
-   | `VAPID_PRIVATE_KEY` | the private key from step 1 (**secret**)                  |
-   | `VAPID_SUBJECT`     | a contact `mailto:` address or an `https://` URL          |
+   | Variable            | Value                                            |
+   | ------------------- | ------------------------------------------------ |
+   | `VAPID_PUBLIC_KEY`  | the public key from step 1                       |
+   | `VAPID_PRIVATE_KEY` | the private key from step 1 (**secret**)         |
+   | `VAPID_SUBJECT`     | a contact `mailto:` address or an `https://` URL |
 
    All three are required together; a partial set is rejected at startup. Each
    also accepts a `RELAYDOCK_`-prefixed alias (e.g. `RELAYDOCK_VAPID_PUBLIC_KEY`).
