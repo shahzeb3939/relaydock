@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 
 	"github.com/google/uuid"
@@ -159,5 +160,62 @@ func TestEndpointsPreserveServerBasePath(t *testing.T) {
 	}
 	if websocketEndpoint != "ws://localhost:3000/ws/agent" {
 		t.Fatalf("WebSocketEndpoint() = %q", websocketEndpoint)
+	}
+}
+
+func TestServerSlugIsStableSafeAndDistinct(t *testing.T) {
+	// The same server yields the same slug whether or not it carries a trailing
+	// slash, so re-running the installer for a server is idempotent.
+	withoutSlash, err := ServerSlug("https://relaydock-shahzeb.duckdns.org")
+	if err != nil {
+		t.Fatal(err)
+	}
+	withSlash, err := ServerSlug("https://relaydock-shahzeb.duckdns.org/")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if withoutSlash != withSlash {
+		t.Fatalf("trailing slash changed slug: %q vs %q", withoutSlash, withSlash)
+	}
+
+	// The slug is filesystem- and launchd-label-safe: lowercase alphanumerics and
+	// single dashes, no leading or trailing dash, and it keeps a readable host prefix.
+	for _, character := range withoutSlash {
+		safe := (character >= 'a' && character <= 'z') ||
+			(character >= '0' && character <= '9') ||
+			character == '-'
+		if !safe {
+			t.Fatalf("slug %q contains unsafe character %q", withoutSlash, character)
+		}
+	}
+	if strings.HasPrefix(withoutSlash, "-") || strings.HasSuffix(withoutSlash, "-") {
+		t.Fatalf("slug %q has a leading or trailing dash", withoutSlash)
+	}
+	if !strings.HasPrefix(withoutSlash, "relaydock-shahzeb-duckdns-org-") {
+		t.Fatalf("slug %q dropped the readable host prefix", withoutSlash)
+	}
+
+	// Distinct servers never collide — including ones whose readable part sanitises
+	// to the same base — because the slug ends in a hash of the canonical URL.
+	seen := map[string]string{}
+	for _, server := range []string{
+		"https://relay.example.com",
+		"https://relay.example.com:8443",
+		"https://relay.example.com/base",
+		"https://relay.example.org",
+		"http://127.0.0.1:3000",
+	} {
+		slug, err := ServerSlug(server)
+		if err != nil {
+			t.Fatalf("ServerSlug(%q): %v", server, err)
+		}
+		if other, ok := seen[slug]; ok {
+			t.Fatalf("slug collision: %q and %q both map to %q", other, server, slug)
+		}
+		seen[slug] = server
+	}
+
+	if _, err := ServerSlug("not-a-url"); err == nil {
+		t.Fatal("ServerSlug accepted an invalid server URL")
 	}
 }

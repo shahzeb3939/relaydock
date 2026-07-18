@@ -113,8 +113,7 @@ function ConnectedJobConsole({
   // connecting/reconnecting/offline states (common on mobile) — a send safely
   // no-ops when the socket isn't open — and only disable once it's truly closed,
   // so a network blip never freezes an interactive prompt mid-answer.
-  const showControls =
-    job.interactive && ['running', 'waiting_for_input'].includes(socket.status);
+  const showControls = job.interactive && ['running', 'waiting_for_input'].includes(socket.status);
   const acceptsInput = showControls && socket.connection !== 'closed';
   const cancelMutation = useMutation({
     mutationFn: async () => {

@@ -87,7 +87,10 @@ async function subscribeAndRegister(
   let subscription = await registration.pushManager.getSubscription();
   let createdHere = false;
   if (subscription === null) {
-    subscription = await registration.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey });
+    subscription = await registration.pushManager.subscribe({
+      userVisibleOnly: true,
+      applicationServerKey,
+    });
     createdHere = true;
   }
   const posted = await postSubscription(subscription);
@@ -95,7 +98,10 @@ async function subscribeAndRegister(
   if (posted === 'conflict') {
     // The reused endpoint belongs to another account — replace it with a fresh one.
     await subscription.unsubscribe().catch(() => undefined);
-    const fresh = await registration.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey });
+    const fresh = await registration.pushManager.subscribe({
+      userVisibleOnly: true,
+      applicationServerKey,
+    });
     if ((await postSubscription(fresh)) === 'ok') return true;
     await fresh.unsubscribe().catch(() => undefined);
     return false;
@@ -149,9 +155,7 @@ export function useWebPush(): UseWebPushResult {
     }
     try {
       const registration = await navigator.serviceWorker.getRegistration();
-      const subscription = registration
-        ? await registration.pushManager.getSubscription()
-        : null;
+      const subscription = registration ? await registration.pushManager.getSubscription() : null;
       if (subscription === null) {
         resolvedRef.current = true;
         setState('off');

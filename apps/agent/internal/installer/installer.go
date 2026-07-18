@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"time"
 
@@ -95,14 +96,38 @@ func install(ctx context.Context, options Options, dependencies dependencies) (R
 		return Result{}, err
 	}
 	serverURL := server.String()
+
+	// The slug is derived from the server, so every server gets its own config file
+	// and background service and a single machine can run one independent agent per
+	// RelayDock server. An explicit --config still wins for advanced/manual setups.
+	slug, err := config.ServerSlug(serverURL)
+	if err != nil {
+		return Result{}, err
+	}
+	serviceLabel := ServiceLabelPrefix + "." + slug
+
 	configPath := options.ConfigPath
-	if configPath == "" {
-		configPath = filepath.Join(dependencies.homeDirectory, ".config", "relaydock", "agent.json")
+	usingDefaultPath := configPath == ""
+	if usingDefaultPath {
+		configPath = filepath.Join(dependencies.homeDirectory, ".config", "relaydock", "agents", slug+".json")
 	}
 	if !filepath.IsAbs(configPath) {
 		return Result{}, errors.New("agent configuration path must be absolute")
 	}
 	configPath = filepath.Clean(configPath)
+
+	// Upgrade path: a machine installed before per-server namespacing keeps its agent
+	// at the legacy ~/.config/relaydock/agent.json with the legacy service label. When
+	// re-installing that same server, adopt the legacy configuration into its slugged
+	// home so the credential is reused instead of a duplicate agent being created. A
+	// legacy install for a *different* server is never touched.
+	adoptedLegacy := false
+	if usingDefaultPath {
+		adoptedLegacy, err = adoptLegacyConfig(dependencies.homeDirectory, serverURL, configPath)
+		if err != nil {
+			return Result{}, err
+		}
+	}
 
 	extraPath := derivedExtraPath(dependencies.commandPath)
 
@@ -121,10 +146,22 @@ func install(ctx context.Context, options Options, dependencies dependencies) (R
 		HomeDirectory: dependencies.homeDirectory,
 		BinaryPath:    binaryPath,
 		ConfigPath:    configPath,
+		Label:         serviceLabel,
+		Slug:          slug,
 	}, dependencies.runner)
 	if err != nil {
 		return Result{}, err
 	}
+
+	// The slugged service now owns this server. Only after it is running do we retire
+	// the legacy service and configuration we copied from, so the machine never runs
+	// two agents for the same server and a mid-install failure always leaves the
+	// working legacy agent fully intact rather than pointed at a moved-away config.
+	if adoptedLegacy {
+		removeLegacyService(ctx, dependencies)
+		_ = os.Remove(filepath.Join(dependencies.homeDirectory, ".config", "relaydock", "agent.json"))
+	}
+
 	return Result{
 		AlreadyPaired:    outcome.alreadyPaired,
 		ReplacedPrevious: outcome.replacedPrevious,
@@ -134,6 +171,69 @@ func install(ctx context.Context, options Options, dependencies dependencies) (R
 		DeviceName:       outcome.config.DeviceName,
 		ServicePath:      servicePath,
 	}, nil
+}
+
+// adoptLegacyConfig copies a legacy single-agent configuration into its slugged
+// location when — and only when — it is paired with the same server now being
+// installed and the slugged configuration does not already exist. It returns true
+// when it copied the file; the caller removes the legacy file and service only
+// after the new service is confirmed running, so a failure never leaves the legacy
+// agent pointed at a missing config. A legacy configuration for a different server,
+// a missing or unreadable legacy file, or an already-present slugged file all leave
+// the filesystem untouched and return false.
+func adoptLegacyConfig(homeDirectory, serverURL, namespacedPath string) (bool, error) {
+	legacyPath := filepath.Join(homeDirectory, ".config", "relaydock", "agent.json")
+	info, err := os.Lstat(legacyPath)
+	if errors.Is(err, os.ErrNotExist) {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("inspect legacy agent configuration: %w", err)
+	}
+	if !info.Mode().IsRegular() {
+		return false, nil
+	}
+	cfg, err := config.Load(legacyPath)
+	if err != nil {
+		// A legacy file we cannot read is left in place rather than risking data loss.
+		return false, nil
+	}
+	existing, err := config.ParseServerURL(cfg.Server)
+	if err != nil || existing.String() != serverURL {
+		// The legacy configuration belongs to a different server: never touch it.
+		return false, nil
+	}
+	// The legacy agent is paired with this server. Ensure the namespaced config
+	// exists — copying the legacy one in unless a prior run already did — and report
+	// true so the caller retires the legacy service and file after the new service is
+	// confirmed running. Reporting true even when the copy already exists makes
+	// retirement idempotent: a failed-then-retried install still cleans up the legacy
+	// agent instead of leaving a permanent duplicate for the same server.
+	switch _, statErr := os.Lstat(namespacedPath); {
+	case errors.Is(statErr, os.ErrNotExist):
+		if err := config.SaveNew(namespacedPath, cfg); err != nil {
+			return false, fmt.Errorf("adopt legacy agent configuration: %w", err)
+		}
+	case statErr != nil:
+		return false, fmt.Errorf("inspect agent configuration: %w", statErr)
+	}
+	return true, nil
+}
+
+// removeLegacyService best-effort retires the legacy single-agent background
+// service after its configuration has been adopted into a slugged home. Failures
+// are ignored: the machine may simply never have had the legacy service installed.
+func removeLegacyService(ctx context.Context, dependencies dependencies) {
+	switch dependencies.goos {
+	case "darwin":
+		target := "gui/" + strconv.Itoa(dependencies.uid) + "/" + ServiceLabelPrefix
+		_ = dependencies.runner.Run(ctx, "launchctl", "bootout", target)
+		_ = os.Remove(filepath.Join(dependencies.homeDirectory, "Library", "LaunchAgents", ServiceLabelPrefix+".plist"))
+	case "linux":
+		_ = dependencies.runner.Run(ctx, "systemctl", "--user", "disable", "--now", "relaydock-agent.service")
+		_ = os.Remove(filepath.Join(dependencies.homeDirectory, ".config", "systemd", "user", "relaydock-agent.service"))
+		_ = dependencies.runner.Run(ctx, "systemctl", "--user", "daemon-reload")
+	}
 }
 
 func ensurePaired(

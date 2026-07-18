@@ -1,0 +1,10 @@
+# Automatic HTTPS for a self-hosted RelayDock (used by docker-compose.caddy.yml).
+# RELAYDOCK_DOMAIN is injected from the environment; it must be a public
+# hostname that already resolves to this host so Caddy can obtain a certificate.
+{$RELAYDOCK_DOMAIN} {
+  encode zstd gzip
+  # The web container serves the static app and proxies /api and /ws to the
+  # server. Caddy preserves WebSocket upgrades automatically, so the live
+  # terminal stream stays open for the whole session.
+  reverse_proxy web:8080
+}

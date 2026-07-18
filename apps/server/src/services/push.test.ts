@@ -73,7 +73,13 @@ describe('buildJobNotification', () => {
   });
 
   it('returns null for statuses that must not interrupt the user', () => {
-    for (const status of ['queued', 'dispatched', 'running', 'cancelled', 'disconnected'] as const) {
+    for (const status of [
+      'queued',
+      'dispatched',
+      'running',
+      'cancelled',
+      'disconnected',
+    ] as const) {
       expect(
         buildJobNotification({ jobId: 'j1', status, exitCode: null, repositoryName: 'r' }),
       ).toBeNull();

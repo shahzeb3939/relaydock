@@ -13,7 +13,10 @@ import (
 	"unicode/utf8"
 )
 
-const serviceLabel = "com.relaydock.agent"
+// ServiceLabelPrefix is the launchd label of the legacy single-agent install and
+// the prefix every per-server launchd label extends (prefix + "." + slug). It is
+// also the systemd unit stem ("relaydock-agent"[-slug]).
+const ServiceLabelPrefix = "com.relaydock.agent"
 
 type commandRunner interface {
 	Run(context.Context, string, ...string) error
@@ -40,6 +43,11 @@ type serviceOptions struct {
 	HomeDirectory string
 	BinaryPath    string
 	ConfigPath    string
+	// Label is the launchd service label and, on Linux, the systemd unit name is
+	// derived from Slug. Both distinguish this server's agent from every other so
+	// the machine can run one background service per RelayDock server.
+	Label string
+	Slug  string
 }
 
 func installService(ctx context.Context, options serviceOptions, runner commandRunner) (string, error) {
@@ -58,8 +66,8 @@ func installLaunchAgent(ctx context.Context, options serviceOptions, runner comm
 	if err := ensurePrivateDirectory(logsDirectory); err != nil {
 		return "", fmt.Errorf("create agent log directory: %w", err)
 	}
-	servicePath := filepath.Join(options.HomeDirectory, "Library", "LaunchAgents", serviceLabel+".plist")
-	manifest, err := renderLaunchAgent(options.BinaryPath, options.ConfigPath, filepath.Join(logsDirectory, "agent.log"))
+	servicePath := filepath.Join(options.HomeDirectory, "Library", "LaunchAgents", options.Label+".plist")
+	manifest, err := renderLaunchAgent(options.Label, options.BinaryPath, options.ConfigPath, filepath.Join(logsDirectory, options.Slug+".log"))
 	if err != nil {
 		return "", err
 	}
@@ -70,7 +78,7 @@ func installLaunchAgent(ctx context.Context, options serviceOptions, runner comm
 		return "", fmt.Errorf("write launch agent: %w", err)
 	}
 	domain := "gui/" + strconv.Itoa(options.UID)
-	target := domain + "/" + serviceLabel
+	target := domain + "/" + options.Label
 	_ = runner.Run(ctx, "launchctl", "bootout", target)
 	if err := runner.Run(ctx, "launchctl", "enable", target); err != nil {
 		return "", fmt.Errorf("enable launch agent: %w", err)
@@ -87,21 +95,24 @@ func installLaunchAgent(ctx context.Context, options serviceOptions, runner comm
 	return servicePath, nil
 }
 
-func renderLaunchAgent(binaryPath, configPath, logPath string) ([]byte, error) {
-	for label, value := range map[string]string{
+func renderLaunchAgent(label, binaryPath, configPath, logPath string) ([]byte, error) {
+	for description, value := range map[string]string{
 		"agent executable": binaryPath,
 		"agent config":     configPath,
 		"agent log":        logPath,
 	} {
 		if !filepath.IsAbs(value) {
-			return nil, fmt.Errorf("%s path must be absolute", label)
+			return nil, fmt.Errorf("%s path must be absolute", description)
 		}
 		if !utf8.ValidString(value) {
-			return nil, fmt.Errorf("%s path is not valid UTF-8", label)
+			return nil, fmt.Errorf("%s path is not valid UTF-8", description)
 		}
 		if strings.IndexFunc(value, invalidXMLCharacter) >= 0 {
-			return nil, fmt.Errorf("%s path contains a character that is invalid in XML", label)
+			return nil, fmt.Errorf("%s path contains a character that is invalid in XML", description)
 		}
+	}
+	if label == "" || !utf8.ValidString(label) || strings.IndexFunc(label, invalidXMLCharacter) >= 0 {
+		return nil, errors.New("service label is empty or contains a character that is invalid in XML")
 	}
 	var manifest bytes.Buffer
 	manifest.WriteString(`<?xml version="1.0" encoding="UTF-8"?>
@@ -109,7 +120,9 @@ func renderLaunchAgent(binaryPath, configPath, logPath string) ([]byte, error) {
 <plist version="1.0">
 <dict>
   <key>Label</key>
-  <string>com.relaydock.agent</string>
+  <string>`)
+	writeXMLEscaped(&manifest, label)
+	manifest.WriteString(`</string>
   <key>ProgramArguments</key>
   <array>
     <string>`)
@@ -166,7 +179,8 @@ func writeXMLEscaped(destination *bytes.Buffer, value string) {
 }
 
 func installSystemdUserService(ctx context.Context, options serviceOptions, runner commandRunner) (string, error) {
-	servicePath := filepath.Join(options.HomeDirectory, ".config", "systemd", "user", "relaydock-agent.service")
+	unitName := "relaydock-agent-" + options.Slug + ".service"
+	servicePath := filepath.Join(options.HomeDirectory, ".config", "systemd", "user", unitName)
 	unit, err := renderSystemdUserService(options.BinaryPath, options.ConfigPath)
 	if err != nil {
 		return "", err
@@ -182,9 +196,9 @@ func installSystemdUserService(ctx context.Context, options serviceOptions, runn
 		message   string
 	}{
 		{arguments: []string{"--user", "daemon-reload"}, message: "reload systemd user services"},
-		{arguments: []string{"--user", "enable", "relaydock-agent.service"}, message: "enable systemd user service"},
-		{arguments: []string{"--user", "restart", "relaydock-agent.service"}, message: "start systemd user service"},
-		{arguments: []string{"--user", "is-active", "--quiet", "relaydock-agent.service"}, message: "verify systemd user service"},
+		{arguments: []string{"--user", "enable", unitName}, message: "enable systemd user service"},
+		{arguments: []string{"--user", "restart", unitName}, message: "start systemd user service"},
+		{arguments: []string{"--user", "is-active", "--quiet", unitName}, message: "verify systemd user service"},
 	} {
 		if err := runner.Run(ctx, "systemctl", command.arguments...); err != nil {
 			return "", fmt.Errorf("%s: %w", command.message, err)

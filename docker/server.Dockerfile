@@ -16,4 +16,4 @@ ENV NODE_ENV=production
 COPY --from=build /workspace /workspace
 USER node
 EXPOSE 3000
-CMD ["sh", "-c", "node apps/server/node_modules/prisma/build/index.js migrate deploy && node apps/server/dist/index.js"]
+CMD ["sh", "-c", "node apps/server/node_modules/prisma/build/index.js migrate deploy --schema apps/server/prisma/schema.prisma && node apps/server/dist/index.js"]

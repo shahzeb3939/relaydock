@@ -557,15 +557,24 @@ func TestInstallLaunchAgentWritesManifestAndRunsExpectedCommands(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	slug, err := config.ServerSlug("https://relay.example.com")
+	if err != nil {
+		t.Fatal(err)
+	}
+	label := ServiceLabelPrefix + "." + slug
+	target := "gui/501/" + label
 	wantCommands := []recordedCommand{
-		{name: "launchctl", arguments: []string{"bootout", "gui/501/com.relaydock.agent"}},
-		{name: "launchctl", arguments: []string{"enable", "gui/501/com.relaydock.agent"}},
+		{name: "launchctl", arguments: []string{"bootout", target}},
+		{name: "launchctl", arguments: []string{"enable", target}},
 		{name: "launchctl", arguments: []string{"bootstrap", "gui/501", result.ServicePath}},
-		{name: "launchctl", arguments: []string{"kickstart", "-k", "gui/501/com.relaydock.agent"}},
-		{name: "launchctl", arguments: []string{"print", "gui/501/com.relaydock.agent"}},
+		{name: "launchctl", arguments: []string{"kickstart", "-k", target}},
+		{name: "launchctl", arguments: []string{"print", target}},
 	}
 	if !reflect.DeepEqual(runner.commands, wantCommands) {
 		t.Fatalf("launchctl commands = %#v, want %#v", runner.commands, wantCommands)
+	}
+	if !strings.HasSuffix(result.ServicePath, label+".plist") {
+		t.Fatalf("service path = %q, want it to end with the slugged label", result.ServicePath)
 	}
 	assertMode(t, result.ServicePath, 0o644)
 	assertMode(t, filepath.Join(home, "Library", "Logs", "RelayDock"), 0o700)
@@ -576,10 +585,14 @@ func TestInstallLaunchAgentWritesManifestAndRunsExpectedCommands(t *testing.T) {
 	if !strings.Contains(string(manifest), result.BinaryPath) || !strings.Contains(string(manifest), configPath) {
 		t.Fatalf("launch agent does not contain installed paths:\n%s", manifest)
 	}
+	if !strings.Contains(string(manifest), "<string>"+label+"</string>") {
+		t.Fatalf("launch agent does not carry the slugged label:\n%s", manifest)
+	}
 }
 
 func TestRenderLaunchAgentEscapesPathsAndProducesXML(t *testing.T) {
 	manifest, err := renderLaunchAgent(
+		"com.relaydock.agent.relay-example-com-0123456789",
 		`/Users/A & B/"agent"`,
 		`/Users/A & B/config's.json`,
 		`/Users/A & B/<agent>.log`,
@@ -644,13 +657,263 @@ func TestRenderSystemdUserServiceEscapesPaths(t *testing.T) {
 	}
 }
 
+func TestInstallNamespacesByServerWhenNoConfigPathGiven(t *testing.T) {
+	home := t.TempDir()
+	server := "https://relay.example.com"
+	slug, err := config.ServerSlug(server)
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := install(context.Background(), Options{
+		Server:       server,
+		Code:         "CODE",
+		Name:         "Device",
+		AgentVersion: "0.1.0",
+	}, dependencies{
+		goos:           "darwin",
+		uid:            501,
+		homeDirectory:  home,
+		executablePath: executableFixture(t, "agent"),
+		pair: func(_ context.Context, options client.PairOptions) (config.Config, error) {
+			return validAgentConfig(options.Server, options.Name), nil
+		},
+		runner: &recordingRunner{},
+	})
+	if err != nil {
+		t.Fatalf("install: %v", err)
+	}
+	wantConfig := filepath.Join(home, ".config", "relaydock", "agents", slug+".json")
+	if result.ConfigPath != wantConfig {
+		t.Fatalf("config path = %q, want namespaced %q", result.ConfigPath, wantConfig)
+	}
+	if _, err := os.Stat(wantConfig); err != nil {
+		t.Fatalf("namespaced config was not written: %v", err)
+	}
+	if legacy := filepath.Join(home, ".config", "relaydock", "agent.json"); fileExists(legacy) {
+		t.Fatal("namespaced install wrote the legacy agent.json")
+	}
+	label := ServiceLabelPrefix + "." + slug
+	if !strings.HasSuffix(result.ServicePath, label+".plist") {
+		t.Fatalf("service path = %q, want the slugged label", result.ServicePath)
+	}
+}
+
+func TestInstallKeepsDifferentServersIndependent(t *testing.T) {
+	home := t.TempDir()
+	newDeps := func() dependencies {
+		return dependencies{
+			goos:           "darwin",
+			uid:            501,
+			homeDirectory:  home,
+			executablePath: executableFixture(t, "agent"),
+			pair: func(_ context.Context, options client.PairOptions) (config.Config, error) {
+				return validAgentConfig(options.Server, options.Name), nil
+			},
+			runner: &recordingRunner{},
+		}
+	}
+	first, err := install(context.Background(), Options{Server: "https://one.example.com", Code: "C1", Name: "One", AgentVersion: "0.1.0"}, newDeps())
+	if err != nil {
+		t.Fatalf("first install: %v", err)
+	}
+	second, err := install(context.Background(), Options{Server: "https://two.example.com", Code: "C2", Name: "Two", AgentVersion: "0.1.0"}, newDeps())
+	if err != nil {
+		t.Fatalf("second install: %v", err)
+	}
+	if first.ConfigPath == second.ConfigPath {
+		t.Fatalf("two servers shared a config path: %q", first.ConfigPath)
+	}
+	if first.ServicePath == second.ServicePath {
+		t.Fatalf("two servers shared a service: %q", first.ServicePath)
+	}
+	// Installing the second server must not remove the first server's agent.
+	for _, path := range []string{first.ConfigPath, second.ConfigPath} {
+		if !fileExists(path) {
+			t.Fatalf("config %q is missing after installing the other server", path)
+		}
+	}
+}
+
+func TestInstallAdoptsLegacyConfigForSameServer(t *testing.T) {
+	home := t.TempDir()
+	server := "https://relay.example.com"
+	legacyPath := filepath.Join(home, ".config", "relaydock", "agent.json")
+	legacyConfig := validAgentConfig(server, "Legacy device")
+	legacyConfig.Credential = "rdc_legacy_credential"
+	if err := config.Save(legacyPath, legacyConfig); err != nil {
+		t.Fatal(err)
+	}
+	runner := &recordingRunner{}
+	result, err := install(context.Background(), Options{
+		Server:       server,
+		AgentVersion: "0.1.0",
+	}, dependencies{
+		goos:           "darwin",
+		uid:            501,
+		homeDirectory:  home,
+		executablePath: executableFixture(t, "agent"),
+		pair: func(context.Context, client.PairOptions) (config.Config, error) {
+			t.Fatal("pair must not run when adopting a legacy config for the same server")
+			return config.Config{}, nil
+		},
+		runner: runner,
+	})
+	if err != nil {
+		t.Fatalf("adopt install: %v", err)
+	}
+	if !result.AlreadyPaired {
+		t.Fatal("adoption should preserve the existing pairing")
+	}
+	slug, err := config.ServerSlug(server)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantConfig := filepath.Join(home, ".config", "relaydock", "agents", slug+".json")
+	if result.ConfigPath != wantConfig {
+		t.Fatalf("config path = %q, want namespaced %q", result.ConfigPath, wantConfig)
+	}
+	if fileExists(legacyPath) {
+		t.Fatal("legacy config was left behind after adoption")
+	}
+	adopted, err := config.Load(wantConfig)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if adopted.Credential != "rdc_legacy_credential" {
+		t.Fatalf("adopted credential = %q, want the reused legacy credential", adopted.Credential)
+	}
+	legacyBootout := recordedCommand{name: "launchctl", arguments: []string{"bootout", "gui/501/" + ServiceLabelPrefix}}
+	if !containsCommand(runner.commands, legacyBootout) {
+		t.Fatalf("legacy launchd service was not retired: %#v", runner.commands)
+	}
+}
+
+func TestInstallLeavesLegacyConfigForDifferentServerUntouched(t *testing.T) {
+	home := t.TempDir()
+	legacyPath := filepath.Join(home, ".config", "relaydock", "agent.json")
+	if err := config.Save(legacyPath, validAgentConfig("https://old.example.com", "Legacy device")); err != nil {
+		t.Fatal(err)
+	}
+	legacyBefore, err := os.ReadFile(legacyPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	runner := &recordingRunner{}
+	newServer := "https://new.example.com"
+	result, err := install(context.Background(), Options{
+		Server:       newServer,
+		Code:         "CODE",
+		Name:         "New device",
+		AgentVersion: "0.1.0",
+	}, dependencies{
+		goos:           "darwin",
+		uid:            501,
+		homeDirectory:  home,
+		executablePath: executableFixture(t, "agent"),
+		pair: func(_ context.Context, options client.PairOptions) (config.Config, error) {
+			return validAgentConfig(options.Server, options.Name), nil
+		},
+		runner: runner,
+	})
+	if err != nil {
+		t.Fatalf("install: %v", err)
+	}
+	legacyAfter, err := os.ReadFile(legacyPath)
+	if err != nil {
+		t.Fatalf("legacy config disappeared: %v", err)
+	}
+	if !reflect.DeepEqual(legacyAfter, legacyBefore) {
+		t.Fatal("installing a different server changed the legacy configuration")
+	}
+	slug, err := config.ServerSlug(newServer)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantConfig := filepath.Join(home, ".config", "relaydock", "agents", slug+".json")
+	if result.ConfigPath != wantConfig {
+		t.Fatalf("config path = %q, want namespaced %q", result.ConfigPath, wantConfig)
+	}
+	legacyBootout := recordedCommand{name: "launchctl", arguments: []string{"bootout", "gui/501/" + ServiceLabelPrefix}}
+	if containsCommand(runner.commands, legacyBootout) {
+		t.Fatal("legacy service was retired when installing a different server")
+	}
+}
+
+func TestInstallRetiresOrphanedLegacyOnRetry(t *testing.T) {
+	home := t.TempDir()
+	server := "https://relay.example.com"
+	slug, err := config.ServerSlug(server)
+	if err != nil {
+		t.Fatal(err)
+	}
+	legacyPath := filepath.Join(home, ".config", "relaydock", "agent.json")
+	namespacedPath := filepath.Join(home, ".config", "relaydock", "agents", slug+".json")
+	// Reproduce the aftermath of a prior install that copied the legacy config but
+	// failed before retiring the legacy service: BOTH the legacy config (same server)
+	// and its namespaced copy exist.
+	seed := validAgentConfig(server, "Device")
+	if err := config.Save(legacyPath, seed); err != nil {
+		t.Fatal(err)
+	}
+	if err := config.SaveNew(namespacedPath, seed); err != nil {
+		t.Fatal(err)
+	}
+	runner := &recordingRunner{}
+	result, err := install(context.Background(), Options{
+		Server:       server,
+		AgentVersion: "0.1.0",
+	}, dependencies{
+		goos:           "darwin",
+		uid:            501,
+		homeDirectory:  home,
+		executablePath: executableFixture(t, "agent"),
+		pair: func(context.Context, client.PairOptions) (config.Config, error) {
+			t.Fatal("pair must not run for an already-paired retry")
+			return config.Config{}, nil
+		},
+		runner: runner,
+	})
+	if err != nil {
+		t.Fatalf("retry install: %v", err)
+	}
+	if !result.AlreadyPaired {
+		t.Fatal("retry should report the existing pairing")
+	}
+	if fileExists(legacyPath) {
+		t.Fatal("orphaned legacy config was not retired on the retry")
+	}
+	legacyBootout := recordedCommand{name: "launchctl", arguments: []string{"bootout", "gui/501/" + ServiceLabelPrefix}}
+	if !containsCommand(runner.commands, legacyBootout) {
+		t.Fatalf("orphaned legacy service was not retired on the retry: %#v", runner.commands)
+	}
+}
+
+func containsCommand(commands []recordedCommand, want recordedCommand) bool {
+	for _, command := range commands {
+		if reflect.DeepEqual(command, want) {
+			return true
+		}
+	}
+	return false
+}
+
+func fileExists(path string) bool {
+	_, err := os.Stat(path)
+	return err == nil
+}
+
 func assertSystemdCommands(t *testing.T, commands []recordedCommand) {
 	t.Helper()
+	slug, err := config.ServerSlug("https://relay.example.com")
+	if err != nil {
+		t.Fatal(err)
+	}
+	unit := "relaydock-agent-" + slug + ".service"
 	want := []recordedCommand{
 		{name: "systemctl", arguments: []string{"--user", "daemon-reload"}},
-		{name: "systemctl", arguments: []string{"--user", "enable", "relaydock-agent.service"}},
-		{name: "systemctl", arguments: []string{"--user", "restart", "relaydock-agent.service"}},
-		{name: "systemctl", arguments: []string{"--user", "is-active", "--quiet", "relaydock-agent.service"}},
+		{name: "systemctl", arguments: []string{"--user", "enable", unit}},
+		{name: "systemctl", arguments: []string{"--user", "restart", unit}},
+		{name: "systemctl", arguments: []string{"--user", "is-active", "--quiet", unit}},
 	}
 	if !reflect.DeepEqual(commands, want) {
 		t.Fatalf("systemctl commands = %#v, want %#v", commands, want)

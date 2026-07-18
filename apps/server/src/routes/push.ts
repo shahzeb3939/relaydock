@@ -39,7 +39,10 @@ function ownerId(request: FastifyRequest): string {
   return request.auth.user.id;
 }
 
-export function registerPushRoutes(app: FastifyInstance, dependencies: PushRouteDependencies): void {
+export function registerPushRoutes(
+  app: FastifyInstance,
+  dependencies: PushRouteDependencies,
+): void {
   const { database, push, audit, requireAuth, requireCsrf } = dependencies;
 
   // Lets the web client discover whether push is configured and, if so, the
@@ -60,8 +63,7 @@ export function registerPushRoutes(app: FastifyInstance, dependencies: PushRoute
       const userId = ownerId(request);
       const input = subscribeSchema.parse(request.body);
       const userAgentHeader = request.headers['user-agent'];
-      const userAgent =
-        typeof userAgentHeader === 'string' ? userAgentHeader.slice(0, 500) : null;
+      const userAgent = typeof userAgentHeader === 'string' ? userAgentHeader.slice(0, 500) : null;
 
       // Refresh the caller's OWN row for this endpoint (idempotent re-subscribe
       // / key rotation). Scoped to userId so this can never touch another user's
