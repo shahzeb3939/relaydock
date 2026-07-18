@@ -40,9 +40,12 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm prisma:generate
       - run: pnpm --filter @relaydock/server prisma:deploy
+      # Build the workspace packages first so their compiled types (e.g.
+      # @relaydock/protocol's dist/*.d.ts) exist before typecheck/lint/test run —
+      # otherwise those steps fail to resolve cross-package imports on a clean checkout.
+      - run: pnpm build
       - run: pnpm format:check
       - run: pnpm lint
       - run: pnpm test
       - run: pnpm test:agent:race
       - run: pnpm check:agent:distributions
-      - run: pnpm build
