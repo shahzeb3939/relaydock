@@ -629,7 +629,6 @@ select:focus-visible,
 
 .card-actions {
   display: flex;
-  flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
   gap: 8px;
@@ -637,6 +636,73 @@ select:focus-visible,
 
 .card-actions .secondary {
   flex: 1;
+}
+
+.kebab {
+  position: relative;
+  display: inline-flex;
+}
+
+.kebab-trigger {
+  min-width: 40px;
+  min-height: 40px;
+  padding: 0;
+  border-color: var(--border-strong);
+  font-size: 1.3rem;
+  line-height: 1;
+}
+
+.kebab-trigger:not(:disabled):hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.kebab-menu {
+  position: absolute;
+  right: 0;
+  bottom: calc(100% + 8px);
+  z-index: 30;
+  display: flex;
+  min-width: 176px;
+  flex-direction: column;
+  padding: 6px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--surface-raised);
+  box-shadow: var(--shadow);
+}
+
+.kebab-item {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  padding: 9px 11px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-size: 0.84rem;
+  font-weight: 600;
+  text-align: left;
+  cursor: pointer;
+}
+
+.kebab-item:hover,
+.kebab-item:focus-visible {
+  background: var(--surface-soft);
+  color: var(--accent);
+  outline: none;
+}
+
+.kebab-item.danger-text {
+  color: var(--danger);
+}
+
+.kebab-item.danger-text:hover,
+.kebab-item.danger-text:focus-visible {
+  background: var(--danger-bg);
+  color: var(--danger);
 }
 
 .status-badge {
