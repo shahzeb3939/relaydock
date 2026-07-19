@@ -82,4 +82,39 @@ describe('server environment', () => {
       }),
     ).toThrow(/redis:\/\//);
   });
+
+  it('enables push when all three VAPID values are set', () => {
+    const environment = parseServerEnvironment({
+      ...baseEnvironment,
+      VAPID_PUBLIC_KEY: 'a-public-key',
+      VAPID_PRIVATE_KEY: 'a-private-key',
+      VAPID_SUBJECT: 'mailto:ops@example.test',
+    });
+    expect(environment.pushEnabled).toBe(true);
+    expect(environment.VAPID_PUBLIC_KEY).toBe('a-public-key');
+  });
+
+  it('treats blank VAPID values as unset so an empty passthrough keeps push inert', () => {
+    // docker-compose `${VAPID_*:-}` forwards empty strings when the keys are not
+    // configured; these must read as "off", not fail the min-length check.
+    const environment = parseServerEnvironment({
+      ...baseEnvironment,
+      VAPID_PUBLIC_KEY: '',
+      VAPID_PRIVATE_KEY: '',
+      VAPID_SUBJECT: '',
+    });
+    expect(environment.pushEnabled).toBe(false);
+    expect(environment.VAPID_PUBLIC_KEY).toBeUndefined();
+  });
+
+  it('rejects a partially configured VAPID key set', () => {
+    expect(() =>
+      parseServerEnvironment({
+        ...baseEnvironment,
+        VAPID_PUBLIC_KEY: 'a-public-key',
+        VAPID_PRIVATE_KEY: '',
+        VAPID_SUBJECT: '',
+      }),
+    ).toThrow(/VAPID_PUBLIC_KEY, VAPID_PRIVATE_KEY, and VAPID_SUBJECT must all be set/);
+  });
 });

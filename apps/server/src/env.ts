@@ -214,6 +214,14 @@ export interface ServerEnvironment extends z.infer<typeof environmentSchema> {
   pushEnabled: boolean;
 }
 
+// Treats a missing-or-blank env value as unset. Many env layers (shells, compose
+// `${VAR:-}` defaults, CI) surface an unset variable as an empty string rather
+// than dropping it; for optional secrets that difference must not matter.
+function emptyToUndefined(value: string | undefined): string | undefined {
+  if (value === undefined) return undefined;
+  return value.trim() === '' ? undefined : value;
+}
+
 export function parseServerEnvironment(source: NodeJS.ProcessEnv): ServerEnvironment {
   const sessionSecret = source.RELAYDOCK_SESSION_PEPPER ?? source.SESSION_SECRET;
   const credentialSecret =
@@ -248,9 +256,19 @@ export function parseServerEnvironment(source: NodeJS.ProcessEnv): ServerEnviron
     GOOGLE_CLIENT_SECRET: source.RELAYDOCK_GOOGLE_CLIENT_SECRET ?? source.GOOGLE_CLIENT_SECRET,
     GOOGLE_ALLOWED_EMAIL_DOMAINS:
       source.RELAYDOCK_GOOGLE_ALLOWED_EMAIL_DOMAINS ?? source.GOOGLE_ALLOWED_EMAIL_DOMAINS,
-    VAPID_PUBLIC_KEY: source.RELAYDOCK_VAPID_PUBLIC_KEY ?? source.VAPID_PUBLIC_KEY,
-    VAPID_PRIVATE_KEY: source.RELAYDOCK_VAPID_PRIVATE_KEY ?? source.VAPID_PRIVATE_KEY,
-    VAPID_SUBJECT: source.RELAYDOCK_VAPID_SUBJECT ?? source.VAPID_SUBJECT,
+    // Coerce empty to undefined so a deployment that wires the VAPID vars through
+    // an env layer but leaves them blank (e.g. docker-compose `${VAPID_*:-}`)
+    // reads as "not configured" — push stays inert — instead of failing the
+    // `.min(1)` check and crash-looping the server. Applied per source so an
+    // empty alias never shadows a set canonical value.
+    VAPID_PUBLIC_KEY:
+      emptyToUndefined(source.RELAYDOCK_VAPID_PUBLIC_KEY) ??
+      emptyToUndefined(source.VAPID_PUBLIC_KEY),
+    VAPID_PRIVATE_KEY:
+      emptyToUndefined(source.RELAYDOCK_VAPID_PRIVATE_KEY) ??
+      emptyToUndefined(source.VAPID_PRIVATE_KEY),
+    VAPID_SUBJECT:
+      emptyToUndefined(source.RELAYDOCK_VAPID_SUBJECT) ?? emptyToUndefined(source.VAPID_SUBJECT),
   };
   const environment = environmentSchema.parse(normalized);
   return {
