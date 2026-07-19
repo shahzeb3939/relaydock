@@ -160,8 +160,12 @@ export function registerWebSocketRoutes(
           helloReceived = true;
           clearTimeout(helloTimeout);
           const now = new Date();
+          // Do not sync the device name from the agent. The name is set once at
+          // pairing (from the agent hostname) and is user-owned thereafter — a
+          // rename must survive reconnects. The agent still reports its hostname
+          // in the hello payload, but we intentionally ignore it here so it can
+          // no longer clobber a name the user chose in the app.
           await updateConnectedDevice({
-            name: message.payload.name,
             platform: message.payload.platform,
             architecture: message.payload.architecture,
             agentVersion: message.payload.agentVersion,
