@@ -13,6 +13,7 @@ import {
   Spinner,
   StatusBadge,
 } from '../components/Feedback';
+import { KebabMenu } from '../components/KebabMenu';
 import { Modal } from '../components/Modal';
 import { RenameDeviceModal } from '../components/RenameDeviceModal';
 import { errorMessage, formatRelativeTime } from '../lib';
@@ -64,33 +65,29 @@ export function DeviceCard({
         <Link className="button secondary" to={`/devices/${device.id}`}>
           Open device <span aria-hidden="true">→</span>
         </Link>
-        <button
-          className="button quiet"
-          type="button"
-          aria-label={`Rename ${device.name}`}
-          onClick={() => onRename(device)}
-        >
-          Rename
-        </button>
-        {device.status === 'revoked' ? (
-          <button
-            className="button quiet danger-text"
-            type="button"
-            aria-label={`Permanently delete ${device.name}`}
-            onClick={() => onDelete(device)}
-          >
-            Delete
-          </button>
-        ) : (
-          <button
-            className="button quiet danger-text"
-            type="button"
-            aria-label={`Revoke ${device.name}`}
-            onClick={() => onRevoke(device)}
-          >
-            Revoke
-          </button>
-        )}
+        <KebabMenu
+          ariaLabel={`Actions for ${device.name}`}
+          items={[
+            {
+              label: 'Rename',
+              ariaLabel: `Rename ${device.name}`,
+              onSelect: () => onRename(device),
+            },
+            device.status === 'revoked'
+              ? {
+                  label: 'Delete permanently',
+                  ariaLabel: `Permanently delete ${device.name}`,
+                  danger: true,
+                  onSelect: () => onDelete(device),
+                }
+              : {
+                  label: 'Revoke',
+                  ariaLabel: `Revoke ${device.name}`,
+                  danger: true,
+                  onSelect: () => onRevoke(device),
+                },
+          ]}
+        />
       </div>
     </article>
   );

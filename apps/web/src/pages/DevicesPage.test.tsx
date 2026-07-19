@@ -97,6 +97,29 @@ describe('PairDeviceModal', () => {
 });
 
 describe('DeviceCard', () => {
+  it('keeps rarely-used actions tucked inside a kebab menu', () => {
+    render(
+      <MemoryRouter>
+        <DeviceCard
+          device={pairedDevice}
+          onRename={vi.fn()}
+          onRevoke={vi.fn()}
+          onDelete={vi.fn()}
+        />
+      </MemoryRouter>,
+    );
+
+    // The card only surfaces "Open device" up front; actions stay hidden until asked for.
+    expect(screen.getByRole('link', { name: /Open device/ })).toBeInTheDocument();
+    expect(
+      screen.queryByRole('menuitem', { name: 'Rename Development laptop' }),
+    ).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Actions for Development laptop' }));
+
+    expect(screen.getByRole('menuitem', { name: 'Rename Development laptop' })).toBeInTheDocument();
+  });
+
   it('offers revocation while a device is active', () => {
     const onRevoke = vi.fn();
     render(
@@ -110,12 +133,13 @@ describe('DeviceCard', () => {
       </MemoryRouter>,
     );
 
-    fireEvent.click(screen.getByRole('button', { name: 'Revoke Development laptop' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Actions for Development laptop' }));
+    expect(
+      screen.queryByRole('menuitem', { name: 'Permanently delete Development laptop' }),
+    ).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Revoke Development laptop' }));
 
     expect(onRevoke).toHaveBeenCalledWith(pairedDevice);
-    expect(
-      screen.queryByRole('button', { name: 'Permanently delete Development laptop' }),
-    ).not.toBeInTheDocument();
   });
 
   it('offers permanent deletion only after revocation', () => {
@@ -132,12 +156,15 @@ describe('DeviceCard', () => {
       </MemoryRouter>,
     );
 
-    fireEvent.click(screen.getByRole('button', { name: 'Permanently delete Development laptop' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Actions for Development laptop' }));
+    expect(
+      screen.queryByRole('menuitem', { name: 'Revoke Development laptop' }),
+    ).not.toBeInTheDocument();
+    fireEvent.click(
+      screen.getByRole('menuitem', { name: 'Permanently delete Development laptop' }),
+    );
 
     expect(onDelete).toHaveBeenCalledWith(revokedDevice);
-    expect(
-      screen.queryByRole('button', { name: 'Revoke Development laptop' }),
-    ).not.toBeInTheDocument();
   });
 
   it('lets an owner start renaming a device', () => {
@@ -153,7 +180,8 @@ describe('DeviceCard', () => {
       </MemoryRouter>,
     );
 
-    fireEvent.click(screen.getByRole('button', { name: 'Rename Development laptop' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Actions for Development laptop' }));
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Rename Development laptop' }));
 
     expect(onRename).toHaveBeenCalledWith(pairedDevice);
   });
