@@ -37,6 +37,12 @@ services:
       RELAYDOCK_JOB_RETENTION_DAYS: ${RELAYDOCK_JOB_RETENTION_DAYS:-30}
       RELAYDOCK_MAX_JOB_OUTPUT_BYTES: ${RELAYDOCK_MAX_JOB_OUTPUT_BYTES:-10485760}
       RELAYDOCK_LOG_LEVEL: ${RELAYDOCK_LOG_LEVEL:-info}
+      # Web Push (VAPID). All three together enable job notifications; left unset
+      # they resolve to empty strings, which the server treats as "not configured"
+      # (push stays inert). See docs/notifications.md.
+      VAPID_PUBLIC_KEY: ${VAPID_PUBLIC_KEY:-}
+      VAPID_PRIVATE_KEY: ${VAPID_PRIVATE_KEY:-}
+      VAPID_SUBJECT: ${VAPID_SUBJECT:-}
     depends_on:
       postgres:
         condition: service_healthy
