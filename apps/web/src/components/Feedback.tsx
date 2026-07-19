@@ -8,9 +8,7 @@ export function Spinner() {
 export function FullPageLoader({ label }: { label: string }) {
   return (
     <main className="full-page-state">
-      <div className="loading-mark" aria-hidden="true">
-        RD
-      </div>
+      <img className="loading-mark" src="/icons/icon-192.png" alt="" aria-hidden="true" />
       <Spinner />
       <p>{label}</p>
     </main>
@@ -20,9 +18,12 @@ export function FullPageLoader({ label }: { label: string }) {
 export function FullPageOffline({ onRetry }: { onRetry: () => void }) {
   return (
     <main className="full-page-state" role="status">
-      <span className="state-icon" aria-hidden="true">
-        RD
-      </span>
+      <img
+        className="brand-mark offline-mark"
+        src="/icons/icon-192.png"
+        alt=""
+        aria-hidden="true"
+      />
       <h1>RelayDock needs a connection</h1>
       <p>
         Connect to the internet to reach your RelayDock server. Jobs already accepted by your laptop

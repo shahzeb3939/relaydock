@@ -159,18 +159,18 @@ select:focus-visible,
 
 .brand-mark,
 .loading-mark {
-  display: grid;
+  flex-shrink: 0;
   width: 38px;
   height: 38px;
-  place-items: center;
-  border: 1px solid rgb(121 242 192 / 35%);
   border-radius: 11px;
-  background: var(--accent);
-  color: var(--accent-ink);
-  font-size: 0.73rem;
-  font-weight: 900;
-  letter-spacing: -0.04em;
+  object-fit: cover;
   box-shadow: 0 0 22px rgb(121 242 192 / 13%);
+}
+
+.offline-mark {
+  width: 48px;
+  height: 48px;
+  border-radius: 14px;
 }
 
 .brand-copy {
