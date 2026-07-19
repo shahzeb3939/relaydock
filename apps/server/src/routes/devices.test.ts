@@ -78,11 +78,21 @@ async function testServer(status: 'online' | 'offline' | 'revoked' | null) {
         calls.push('find-device-before-revoke');
         return status === null ? null : device(status);
       }),
+      update: vi.fn(async (args: { data: { name: string } }) => {
+        calls.push('update-device');
+        return { ...device(status ?? 'offline'), name: args.data.name };
+      }),
     },
     job: {
       findMany: vi.fn(async () => {
         calls.push('find-running-jobs');
         return [];
+      }),
+    },
+    auditEvent: {
+      create: vi.fn(async (args: unknown) => {
+        calls.push('create-audit');
+        return args;
       }),
     },
     $transaction: vi.fn(async (callback: (client: typeof transaction) => Promise<unknown>) => {
@@ -230,6 +240,78 @@ describe('permanent device deletion', () => {
         metadata: { deviceId, deviceName: 'Development laptop' },
       }),
     });
+    await context.app.close();
+  });
+});
+
+describe('device rename', () => {
+  it('renames an owned device and records an audit event', async () => {
+    const context = await testServer('online');
+
+    const response = await context.app.inject({
+      method: 'PATCH',
+      url: `/api/devices/${deviceId}`,
+      payload: { name: '  MacBook Pro  ' },
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toMatchObject({ device: { id: deviceId, name: 'MacBook Pro' } });
+    expect(context.database.device.update).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { id: deviceId }, data: { name: 'MacBook Pro' } }),
+    );
+    expect(context.database.auditEvent.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        action: 'device.renamed',
+        userId,
+        deviceId,
+        metadata: { deviceId, previousName: 'Development laptop', deviceName: 'MacBook Pro' },
+      }),
+    });
+    expect(context.requireCsrf).toHaveBeenCalledOnce();
+    await context.app.close();
+  });
+
+  it('skips the audit event when the name is unchanged', async () => {
+    const context = await testServer('online');
+
+    const response = await context.app.inject({
+      method: 'PATCH',
+      url: `/api/devices/${deviceId}`,
+      payload: { name: 'Development laptop' },
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(context.database.device.update).toHaveBeenCalledOnce();
+    expect(context.database.auditEvent.create).not.toHaveBeenCalled();
+    await context.app.close();
+  });
+
+  it('rejects a blank name without touching the device', async () => {
+    const context = await testServer('online');
+
+    const response = await context.app.inject({
+      method: 'PATCH',
+      url: `/api/devices/${deviceId}`,
+      payload: { name: '   ' },
+    });
+
+    expect(response.statusCode).toBe(400);
+    expect(context.database.device.update).not.toHaveBeenCalled();
+    await context.app.close();
+  });
+
+  it('does not reveal whether a missing device belongs to another user', async () => {
+    const context = await testServer(null);
+
+    const response = await context.app.inject({
+      method: 'PATCH',
+      url: `/api/devices/${deviceId}`,
+      payload: { name: 'Anything' },
+    });
+
+    expect(response.statusCode).toBe(404);
+    expect(response.json()).toMatchObject({ error: { code: 'DEVICE_NOT_FOUND' } });
+    expect(context.database.device.update).not.toHaveBeenCalled();
     await context.app.close();
   });
 });

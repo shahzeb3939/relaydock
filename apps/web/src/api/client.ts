@@ -145,6 +145,14 @@ export const api = {
   pairDevice() {
     return request<PairingCode>('/devices/pairing-codes', { method: 'POST' });
   },
+  async renameDevice(deviceId: string, name: string) {
+    return (
+      await request<{ device: Device }>(`/devices/${encodeURIComponent(deviceId)}`, {
+        method: 'PATCH',
+        body: { name },
+      })
+    ).device;
+  },
   revokeDevice(deviceId: string) {
     return request<void>(`/devices/${encodeURIComponent(deviceId)}`, { method: 'DELETE' });
   },
