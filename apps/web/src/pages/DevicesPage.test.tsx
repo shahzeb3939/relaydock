@@ -101,7 +101,12 @@ describe('DeviceCard', () => {
     const onRevoke = vi.fn();
     render(
       <MemoryRouter>
-        <DeviceCard device={pairedDevice} onRevoke={onRevoke} onDelete={vi.fn()} />
+        <DeviceCard
+          device={pairedDevice}
+          onRename={vi.fn()}
+          onRevoke={onRevoke}
+          onDelete={vi.fn()}
+        />
       </MemoryRouter>,
     );
 
@@ -118,7 +123,12 @@ describe('DeviceCard', () => {
     const onDelete = vi.fn();
     render(
       <MemoryRouter>
-        <DeviceCard device={revokedDevice} onRevoke={vi.fn()} onDelete={onDelete} />
+        <DeviceCard
+          device={revokedDevice}
+          onRename={vi.fn()}
+          onRevoke={vi.fn()}
+          onDelete={onDelete}
+        />
       </MemoryRouter>,
     );
 
@@ -128,5 +138,23 @@ describe('DeviceCard', () => {
     expect(
       screen.queryByRole('button', { name: 'Revoke Development laptop' }),
     ).not.toBeInTheDocument();
+  });
+
+  it('lets an owner start renaming a device', () => {
+    const onRename = vi.fn();
+    render(
+      <MemoryRouter>
+        <DeviceCard
+          device={pairedDevice}
+          onRename={onRename}
+          onRevoke={vi.fn()}
+          onDelete={vi.fn()}
+        />
+      </MemoryRouter>,
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: 'Rename Development laptop' }));
+
+    expect(onRename).toHaveBeenCalledWith(pairedDevice);
   });
 });

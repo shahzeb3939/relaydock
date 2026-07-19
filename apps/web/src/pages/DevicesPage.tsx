@@ -14,15 +14,18 @@ import {
   StatusBadge,
 } from '../components/Feedback';
 import { Modal } from '../components/Modal';
+import { RenameDeviceModal } from '../components/RenameDeviceModal';
 import { errorMessage, formatRelativeTime } from '../lib';
 import { buildAgentInstallCommand } from '../lib/agentInstall';
 
 export function DeviceCard({
   device,
+  onRename,
   onRevoke,
   onDelete,
 }: {
   device: Device;
+  onRename: (device: Device) => void;
   onRevoke: (device: Device) => void;
   onDelete: (device: Device) => void;
 }) {
@@ -61,6 +64,14 @@ export function DeviceCard({
         <Link className="button secondary" to={`/devices/${device.id}`}>
           Open device <span aria-hidden="true">→</span>
         </Link>
+        <button
+          className="button quiet"
+          type="button"
+          aria-label={`Rename ${device.name}`}
+          onClick={() => onRename(device)}
+        >
+          Rename
+        </button>
         {device.status === 'revoked' ? (
           <button
             className="button quiet danger-text"
@@ -204,6 +215,7 @@ export function DevicesPage() {
   const queryClient = useQueryClient();
   const [pairingOpen, setPairingOpen] = useState(false);
   const [pairing, setPairing] = useState<PairingCode | null>(null);
+  const [renameTarget, setRenameTarget] = useState<Device | null>(null);
   const [revokeTarget, setRevokeTarget] = useState<Device | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<Device | null>(null);
   const devicesQuery = useQuery({
@@ -212,6 +224,14 @@ export function DevicesPage() {
     refetchInterval: 30_000,
   });
   const pairingMutation = useMutation({ mutationFn: api.pairDevice, onSuccess: setPairing });
+  const renameMutation = useMutation({
+    mutationFn: ({ deviceId, name }: { deviceId: string; name: string }) =>
+      api.renameDevice(deviceId, name),
+    onSuccess: async () => {
+      setRenameTarget(null);
+      await queryClient.invalidateQueries({ queryKey: queryKeys.devices });
+    },
+  });
   const revokeMutation = useMutation({
     mutationFn: api.revokeDevice,
     onSuccess: async () => {
@@ -232,6 +252,15 @@ export function DevicesPage() {
       await queryClient.invalidateQueries({ queryKey: queryKeys.devices, exact: true });
     },
   });
+  const openRename = (device: Device) => {
+    if (renameMutation.isPending) return;
+    renameMutation.reset();
+    setRenameTarget(device);
+  };
+  const closeRename = () => {
+    setRenameTarget(null);
+    if (!renameMutation.isPending) renameMutation.reset();
+  };
   const openDelete = (device: Device) => {
     if (deleteMutation.isPending) return;
     deleteMutation.reset();
@@ -294,6 +323,7 @@ export function DevicesPage() {
             <DeviceCard
               key={device.id}
               device={device}
+              onRename={openRename}
               onRevoke={setRevokeTarget}
               onDelete={openDelete}
             />
@@ -308,6 +338,16 @@ export function DevicesPage() {
           error={pairingMutation.isError ? errorMessage(pairingMutation.error) : null}
           onClose={closePairing}
           onGenerate={() => pairingMutation.mutate()}
+        />
+      )}
+
+      {renameTarget && (
+        <RenameDeviceModal
+          currentName={renameTarget.name}
+          error={renameMutation.isError ? errorMessage(renameMutation.error) : null}
+          loading={renameMutation.isPending}
+          onClose={closeRename}
+          onRename={(name) => renameMutation.mutate({ deviceId: renameTarget.id, name })}
         />
       )}
 

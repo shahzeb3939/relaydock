@@ -8,6 +8,7 @@ import { DeleteDeviceModal } from '../components/DeleteDeviceModal';
 import { ErrorState, InlineAlert, PageLoader, Spinner, StatusBadge } from '../components/Feedback';
 import { JobList } from '../components/JobList';
 import { Modal } from '../components/Modal';
+import { RenameDeviceModal } from '../components/RenameDeviceModal';
 import { errorMessage, formatDateTime, formatRelativeTime } from '../lib';
 
 function RepositoryForm({ deviceId, onClose }: { deviceId: string; onClose: () => void }) {
@@ -152,6 +153,7 @@ export function DeviceDetailPage() {
   const queryClient = useQueryClient();
   const navigate = useNavigate();
   const [repositoryFormOpen, setRepositoryFormOpen] = useState(false);
+  const [renameOpen, setRenameOpen] = useState(false);
   const [revokeOpen, setRevokeOpen] = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);
   const deviceQuery = useQuery({
@@ -159,6 +161,16 @@ export function DeviceDetailPage() {
     queryFn: () => api.device(deviceId),
     enabled: Boolean(deviceId),
     refetchInterval: 30_000,
+  });
+  const renameMutation = useMutation({
+    mutationFn: (name: string) => api.renameDevice(deviceId, name),
+    onSuccess: async () => {
+      setRenameOpen(false);
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: queryKeys.device(deviceId) }),
+        queryClient.invalidateQueries({ queryKey: queryKeys.devices }),
+      ]);
+    },
   });
   const revokeMutation = useMutation({
     mutationFn: () => api.revokeDevice(deviceId),
@@ -210,6 +222,17 @@ export function DeviceDetailPage() {
           <div className="title-line">
             <h1>{device.name}</h1>
             <StatusBadge status={device.status} />
+            <button
+              className="button secondary rename-inline"
+              type="button"
+              aria-label={`Rename ${device.name}`}
+              onClick={() => {
+                renameMutation.reset();
+                setRenameOpen(true);
+              }}
+            >
+              Rename
+            </button>
           </div>
           <p>
             {device.platform} · {device.architecture} · Agent v{device.agentVersion}
@@ -370,6 +393,18 @@ export function DeviceDetailPage() {
 
       {repositoryFormOpen && (
         <RepositoryForm deviceId={device.id} onClose={() => setRepositoryFormOpen(false)} />
+      )}
+      {renameOpen && (
+        <RenameDeviceModal
+          currentName={device.name}
+          error={renameMutation.isError ? errorMessage(renameMutation.error) : null}
+          loading={renameMutation.isPending}
+          onClose={() => {
+            setRenameOpen(false);
+            renameMutation.reset();
+          }}
+          onRename={(name) => renameMutation.mutate(name)}
+        />
       )}
       {revokeOpen && (
         <Modal

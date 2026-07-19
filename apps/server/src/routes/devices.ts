@@ -16,6 +16,7 @@ import type { AuditService } from '../services/audit.js';
 import type { ConnectionHub, RepositoryValidationBroker } from '../services/connections.js';
 
 const idParametersSchema = z.object({ deviceId: z.string().uuid() });
+const renameInputSchema = z.object({ name: z.string().trim().min(1).max(100) });
 const pairingInputSchema = z.object({
   code: z.string().min(8).max(20),
   name: z.string().trim().min(1).max(100),
@@ -161,6 +162,34 @@ export function registerDeviceRoutes(
       recentJobs: recentJobs.map(serializeJob),
     };
   });
+
+  app.patch(
+    '/api/devices/:deviceId',
+    { preHandler: [requireAuth, requireCsrf] },
+    async (request) => {
+      const { deviceId } = idParametersSchema.parse(request.params);
+      const { name } = renameInputSchema.parse(request.body);
+      const ownerId = userId(request);
+      const existing = await database.device.findFirst({
+        where: { id: deviceId, userId: ownerId },
+      });
+      if (existing === null) throw new AppError(404, 'DEVICE_NOT_FOUND', 'Device not found.');
+      const device = await database.device.update({
+        where: { id: deviceId },
+        data: { name },
+        include: { _count: { select: { repositories: true } } },
+      });
+      if (name !== existing.name) {
+        await audit.record(request, {
+          action: 'device.renamed',
+          userId: ownerId,
+          deviceId,
+          metadata: { deviceId, previousName: existing.name, deviceName: name },
+        });
+      }
+      return { device: serializeDevice(device) };
+    },
+  );
 
   app.delete(
     '/api/devices/:deviceId',
