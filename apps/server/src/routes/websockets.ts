@@ -130,6 +130,15 @@ export function registerWebSocketRoutes(
         throw new AppError(403, 'JOB_FORBIDDEN', 'Job does not belong to this device.');
     };
 
+    // Ownership is a database read and job-to-device is immutable, so on the
+    // high-frequency output path we verify a job once per connection and cache it.
+    const ownedJobs = new Set<string>();
+    const ensureJobOwner = async (jobId: string): Promise<void> => {
+      if (ownedJobs.has(jobId)) return;
+      await assertJobOwner(jobId);
+      ownedJobs.add(jobId);
+    };
+
     const updateConnectedDevice = async (
       data: Parameters<typeof database.device.updateMany>[0]['data'],
     ): Promise<void> => {
@@ -256,10 +265,15 @@ export function registerWebSocketRoutes(
           await jobs.transitionFromAgent(authenticated.deviceId, message.payload.jobId, 'running');
           return;
         case 'job.output':
-          await assertJobOwner(message.payload.jobId);
-          await jobs.persistOutput(authenticated.deviceId, message.payload.jobId, [
+          await ensureJobOwner(message.payload.jobId);
+          // Relay to viewers immediately; the chunk persists in the background so
+          // the live terminal is never gated on a cloud-database write.
+          jobs.relayOutput(
+            authenticated.userId,
+            authenticated.deviceId,
+            message.payload.jobId,
             message.payload,
-          ]);
+          );
           return;
         case 'job.status':
           await assertJobOwner(message.payload.jobId);
@@ -272,6 +286,7 @@ export function registerWebSocketRoutes(
           return;
         case 'job.completed': {
           await assertJobOwner(message.payload.jobId);
+          await jobs.flushOutput(message.payload.jobId);
           const job = await jobs.transitionFromAgent(
             authenticated.deviceId,
             message.payload.jobId,
@@ -289,6 +304,7 @@ export function registerWebSocketRoutes(
         }
         case 'job.failed': {
           await assertJobOwner(message.payload.jobId);
+          await jobs.flushOutput(message.payload.jobId);
           const job = await jobs.transitionFromAgent(
             authenticated.deviceId,
             message.payload.jobId,
@@ -312,6 +328,7 @@ export function registerWebSocketRoutes(
         }
         case 'job.cancelled':
           await assertJobOwner(message.payload.jobId);
+          await jobs.flushOutput(message.payload.jobId);
           await jobs.transitionFromAgent(
             authenticated.deviceId,
             message.payload.jobId,

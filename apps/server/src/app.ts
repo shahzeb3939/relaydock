@@ -123,7 +123,13 @@ export async function buildServer(options: BuildServerOptions = {}): Promise<Rel
         }
       : null,
   });
-  const jobs = new JobService(database, connections, environment.MAX_RETAINED_OUTPUT_BYTES, push);
+  const jobs = new JobService(
+    database,
+    connections,
+    environment.MAX_RETAINED_OUTPUT_BYTES,
+    push,
+    app.log,
+  );
   const maintenance = new MaintenanceService(database, connections, environment, app.log);
 
   const requireAuth = async (request: FastifyRequest, _reply: FastifyReply): Promise<void> => {

@@ -3,6 +3,7 @@ import {
   serverToClientMessageSchema,
   type ClientToServerMessage,
   type JobStatus,
+  type OutputStream,
 } from '@relaydock/protocol';
 import { useQueryClient } from '@tanstack/react-query';
 import { useCallback, useEffect, useRef, useState } from 'react';
@@ -33,6 +34,39 @@ function uniqueSortedChunks(chunks: OutputChunk[]): OutputChunk[] {
   return [...new Map(chunks.map((chunk) => [chunk.sequence, chunk])).values()].sort(
     (left, right) => left.sequence - right.sequence,
   );
+}
+
+interface JobOutputMessage {
+  jobId: string;
+  sequence: number;
+  stream: OutputStream;
+  data: string;
+}
+
+// job.output is the high-frequency hot path. A full zod parse per chunk is a real
+// CPU cost on a busy client (e.g. the laptop that is also running the workload
+// and the agent), so validate its shape cheaply here and reserve the schema parse
+// for low-frequency control messages. A mismatch returns null and falls through.
+function asJobOutput(raw: unknown): JobOutputMessage | null {
+  if (typeof raw !== 'object' || raw === null) return null;
+  const message = raw as { type?: unknown; payload?: unknown };
+  if (
+    message.type !== 'job.output' ||
+    typeof message.payload !== 'object' ||
+    message.payload === null
+  ) {
+    return null;
+  }
+  const { jobId, sequence, stream, data } = message.payload as Record<string, unknown>;
+  if (
+    typeof jobId === 'string' &&
+    typeof sequence === 'number' &&
+    (stream === 'stdout' || stream === 'stderr') &&
+    typeof data === 'string'
+  ) {
+    return { jobId, sequence, stream, data };
+  }
+  return null;
 }
 
 export function createInputSequenceSeed(nowMilliseconds = Date.now(), entropy?: number): number {
@@ -216,6 +250,18 @@ export function useJobSocket(
         } catch {
           return;
         }
+
+        // Hot path: shape-validate job.output without the full schema parse.
+        const output = asJobOutput(raw);
+        if (output !== null) {
+          if (output.jobId !== job.id) return;
+          if (output.sequence <= lastSequenceRef.current) return;
+          lastSequenceRef.current = output.sequence;
+          if (awaitingReplayRef.current) replayBatchCountRef.current += 1;
+          emitOutput({ sequence: output.sequence, stream: output.stream, data: output.data });
+          return;
+        }
+
         const parsed = serverToClientMessageSchema.safeParse(raw);
         if (!parsed.success) return;
         const message = parsed.data;
