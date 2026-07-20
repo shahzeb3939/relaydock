@@ -10,6 +10,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"github.com/relaydock/relaydock/apps/agent/internal/config"
 	"github.com/relaydock/relaydock/apps/agent/internal/executor"
@@ -22,6 +23,13 @@ const (
 	outputReadBytes   = 32 * 1024
 	maxRetainedJobs   = 100
 	maximumErrorBytes = 2000
+
+	// A chatty program can write many tiny lines per second; emitting one frame
+	// per read floods the server and client with work. Coalesce reads within a
+	// short window into fewer frames. The per-chunk cap matches outputReadBytes so
+	// a chunk's worst-case JSON escaping still fits the protocol frame limit.
+	outputCoalesceBytes = 32 * 1024
+	outputFlushInterval = 16 * time.Millisecond
 )
 
 type Transport interface {
@@ -380,16 +388,81 @@ func (s *Session) started(process *os.Process, terminal io.ReadWriteCloser, stat
 }
 
 func (s *Session) readOutput(reader io.Reader, stream string) {
+	var (
+		mu      sync.Mutex
+		pending []byte
+	)
+	// Serializes emits so that, even when the periodic flush and a size-triggered
+	// flush race, coalesced chunks keep PTY order and thus monotonic sequences.
+	var emitMu sync.Mutex
+	flush := func() {
+		emitMu.Lock()
+		defer emitMu.Unlock()
+		mu.Lock()
+		data := pending
+		pending = nil
+		mu.Unlock()
+		if len(data) > 0 {
+			s.emitChunks(stream, data)
+		}
+	}
+
+	stop := make(chan struct{})
+	var flusher sync.WaitGroup
+	flusher.Add(1)
+	go func() {
+		defer flusher.Done()
+		ticker := time.NewTicker(outputFlushInterval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ticker.C:
+				flush()
+			case <-stop:
+				return
+			}
+		}
+	}()
+
 	buffer := make([]byte, outputReadBytes)
 	for {
 		count, err := reader.Read(buffer)
 		if count > 0 {
-			data := strings.ToValidUTF8(string(buffer[:count]), "\uFFFD")
-			s.emitOutput(stream, data)
+			valid := []byte(strings.ToValidUTF8(string(buffer[:count]), "\uFFFD"))
+			mu.Lock()
+			pending = append(pending, valid...)
+			large := len(pending) >= outputCoalesceBytes
+			mu.Unlock()
+			// Bound memory and latency under a flood without waiting for the tick.
+			if large {
+				flush()
+			}
 		}
 		if err != nil {
+			close(stop)
+			flusher.Wait()
+			flush()
 			return
 		}
+	}
+}
+
+// emitChunks emits data as one or more chunks, each within the frame-safe size
+// limit and never split across a UTF-8 rune, preserving order.
+func (s *Session) emitChunks(stream string, data []byte) {
+	for len(data) > 0 {
+		limit := len(data)
+		if limit > outputCoalesceBytes {
+			limit = outputCoalesceBytes
+			for limit > 0 && !utf8.RuneStart(data[limit]) {
+				limit--
+			}
+			if limit == 0 {
+				limit = outputCoalesceBytes
+			}
+		}
+		s.emitOutput(stream, string(data[:limit]))
+		data = data[limit:]
 	}
 }
 

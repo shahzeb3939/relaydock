@@ -25,14 +25,31 @@ interface PersistedOutputResult {
   truncated: boolean;
 }
 
+interface JobLogger {
+  error: (details: Record<string, unknown>, message?: string) => void;
+}
+
+interface PendingPersist {
+  deviceId: string;
+  chunks: IncomingOutputChunk[];
+  timer: ReturnType<typeof setTimeout> | null;
+}
+
 export class JobService {
   private readonly outputQueues = new Map<string, Promise<void>>();
+  // Live output is broadcast to viewers immediately and persisted here in the
+  // background, so the terminal stream is never gated on a database round-trip.
+  // Chunks buffer per job and flush on a short window or once the batch fills.
+  private readonly pendingPersist = new Map<string, PendingPersist>();
+  private static readonly persistFlushMs = 100;
+  private static readonly persistFlushChunks = 200;
 
   constructor(
     private readonly database: DatabaseClient,
     private readonly connections: ConnectionHub,
     private readonly maximumOutputBytes: number,
     private readonly pushNotifier?: JobPushNotifier,
+    private readonly logger?: JobLogger,
   ) {}
 
   async transitionFromAgent(
@@ -85,12 +102,99 @@ export class JobService {
     return updated;
   }
 
+  // Persist a batch of chunks and broadcast the newly retained ones. Used by the
+  // reconnect buffer-sync path, where currently-connected viewers never saw these
+  // chunks live and so must receive them through the broadcast.
   async persistOutput(
     deviceId: string,
     jobId: string,
     chunks: readonly IncomingOutputChunk[],
   ): Promise<PersistedOutputResult> {
-    let result: PersistedOutputResult = { chunks: [], truncated: false };
+    const core = await this.persistChunks(deviceId, jobId, chunks);
+    if (core.userId !== null) {
+      for (const chunk of core.chunks) {
+        const message: ServerToClientMessage = createMessage('job.output', {
+          jobId,
+          sequence: chunk.sequence,
+          stream: chunk.stream,
+          data: chunk.data,
+        });
+        await this.connections.broadcastJob(core.userId, jobId, message);
+      }
+    }
+    return { chunks: core.chunks, truncated: core.truncated };
+  }
+
+  // Live streaming path: fan the chunk out to subscribers immediately (in memory,
+  // no database on the path) and persist it in the background for replay. A
+  // native-feeling terminal cannot afford a cloud-DB round-trip per chunk, so
+  // persistence trails the live stream by at most one flush window; the agent's
+  // own replay buffer backstops that gap on reconnect.
+  relayOutput(userId: string, deviceId: string, jobId: string, chunk: IncomingOutputChunk): void {
+    const message: ServerToClientMessage = createMessage('job.output', {
+      jobId,
+      sequence: chunk.sequence,
+      stream: chunk.stream,
+      data: chunk.data,
+    });
+    // The local fan-out inside broadcastJob runs synchronously; only the optional
+    // Redis publish (distributed mode) is async, and we let it settle off-path.
+    void this.connections.broadcastJob(userId, jobId, message).catch(() => {});
+    this.enqueuePersist(deviceId, jobId, chunk);
+  }
+
+  // Force a job's buffered chunks to the database and wait for the write. Called
+  // before a job reaches a terminal state so a viewer that loads after the job
+  // finishes still replays the complete output.
+  async flushOutput(jobId: string): Promise<void> {
+    await this.flushPersist(jobId);
+  }
+
+  private enqueuePersist(deviceId: string, jobId: string, chunk: IncomingOutputChunk): void {
+    let entry = this.pendingPersist.get(jobId);
+    if (entry === undefined) {
+      entry = { deviceId, chunks: [], timer: null };
+      this.pendingPersist.set(jobId, entry);
+    }
+    entry.chunks.push(chunk);
+    if (entry.chunks.length >= JobService.persistFlushChunks) {
+      void this.flushPersist(jobId);
+      return;
+    }
+    if (entry.timer === null) {
+      entry.timer = setTimeout(() => {
+        void this.flushPersist(jobId);
+      }, JobService.persistFlushMs);
+      // A pending flush must not keep the process alive during shutdown.
+      entry.timer.unref?.();
+    }
+  }
+
+  private async flushPersist(jobId: string): Promise<void> {
+    const entry = this.pendingPersist.get(jobId);
+    if (entry === undefined) return;
+    this.pendingPersist.delete(jobId);
+    if (entry.timer !== null) clearTimeout(entry.timer);
+    try {
+      await this.persistChunks(entry.deviceId, jobId, entry.chunks);
+    } catch (error) {
+      this.logger?.error({ err: error, jobId }, 'background output persistence failed');
+    }
+  }
+
+  // Persist chunks to the database (dedupe, insert, enforce retention) WITHOUT
+  // broadcasting. Serialized per job so ordering and the retention accounting
+  // stay correct across concurrent buffer syncs and background flushes.
+  private async persistChunks(
+    deviceId: string,
+    jobId: string,
+    chunks: readonly IncomingOutputChunk[],
+  ): Promise<{ chunks: IncomingOutputChunk[]; userId: string | null; truncated: boolean }> {
+    let result: { chunks: IncomingOutputChunk[]; userId: string | null; truncated: boolean } = {
+      chunks: [],
+      userId: null,
+      truncated: false,
+    };
     await this.serializeOutput(jobId, async () => {
       const job = await this.database.job.findUnique({
         where: { id: jobId },
@@ -165,16 +269,7 @@ export class JobService {
       const retainedNewChunks = newChunks.filter(
         (chunk) => !retention.removedSequences.has(chunk.sequence),
       );
-      for (const chunk of retainedNewChunks) {
-        const message: ServerToClientMessage = createMessage('job.output', {
-          jobId,
-          sequence: chunk.sequence,
-          stream: chunk.stream,
-          data: chunk.data,
-        });
-        await this.connections.broadcastJob(job.userId, jobId, message);
-      }
-      result = { chunks: retainedNewChunks, truncated: retention.truncated };
+      result = { chunks: retainedNewChunks, userId: job.userId, truncated: retention.truncated };
     });
     return result;
   }

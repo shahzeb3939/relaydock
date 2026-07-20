@@ -96,6 +96,54 @@ func TestManagerRunsNonInteractiveCommandAndSeparatesStreams(t *testing.T) {
 	}
 }
 
+func TestManagerCoalescesOutputWithinFrameLimit(t *testing.T) {
+	root := t.TempDir()
+	repositoryID := uuid.NewString()
+	registry := repository.NewRegistry(map[string]string{repositoryID: root})
+	cfg := config.Config{AllowedEnvironment: []string{"PATH"}}
+	manager := NewManager(registry, func() config.Config { return cfg })
+	transport := newRecordingTransport()
+	manager.SetTransport(transport)
+	const total = 100000
+	manager.Start(protocol.JobStart{
+		JobID:            uuid.NewString(),
+		RepositoryID:     repositoryID,
+		RepositoryPath:   root,
+		Command:          "awk 'BEGIN{for(i=0;i<100000;i++)printf \"A\"}'",
+		WorkingDirectory: ".",
+		Shell:            "/bin/sh",
+		ShellArgs:        []string{"-c"},
+		Columns:          80,
+		Rows:             24,
+	})
+	transport.waitFor(t, "job.completed")
+
+	transport.mu.Lock()
+	defer transport.mu.Unlock()
+	reassembled := 0
+	for _, message := range transport.messages {
+		if message.messageType != "job.output" {
+			continue
+		}
+		output := message.payload.(protocol.JobOutput)
+		// Every coalesced chunk must stay within the frame-safe cap so its JSON
+		// encoding never exceeds the protocol message limit.
+		if len(output.Data) > outputCoalesceBytes {
+			t.Fatalf("chunk of %d bytes exceeds frame cap %d", len(output.Data), outputCoalesceBytes)
+		}
+		for index := 0; index < len(output.Data); index++ {
+			if output.Data[index] != 'A' {
+				t.Fatalf("unexpected byte %q at %d", output.Data[index], index)
+			}
+		}
+		reassembled += len(output.Data)
+	}
+	// Coalescing must be lossless: the full stream is reassembled from the chunks.
+	if reassembled != total {
+		t.Fatalf("reassembled %d bytes; want %d", reassembled, total)
+	}
+}
+
 func TestManagerInteractivePTYAcceptsInputAndCancellation(t *testing.T) {
 	root := t.TempDir()
 	repositoryID := uuid.NewString()
