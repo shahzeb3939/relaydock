@@ -3,7 +3,7 @@ import { FitAddon } from '@xterm/addon-fit';
 import { Terminal } from '@xterm/xterm';
 import { useEffect, useRef } from 'react';
 import type { OutputChunk } from '../api/types';
-import { scrollToCursorKeys } from '../lib/terminalScroll';
+import { wheelStepsFromDrag } from '../lib/terminalScroll';
 import { TerminalKeys } from './TerminalKeys';
 
 export function TerminalView({
@@ -81,23 +81,55 @@ export function TerminalView({
       // Canvas unavailable (very old browser); the DOM renderer still works.
     }
 
-    // A fullscreen TUI runs in the alternate screen buffer, which has no
-    // scrollback: a laptop mouse wheel is translated into cursor keys to move the
-    // app's selection, but a touch swipe emits no wheel events, so a phone can
-    // neither scroll nor navigate. Track the buffer and, while it's the alternate
-    // one, turn vertical swipes into the same cursor-key presses. The normal
-    // buffer keeps xterm's native scroll untouched.
+    // A fullscreen TUI runs in the alternate screen buffer, and modern TUIs
+    // (Claude Code among them) enable mouse tracking. On a laptop the mouse WHEEL
+    // drives them — scrolling the app's own history or moving a selection — but a
+    // touch swipe emits no wheel events, and xterm suppresses its native touch
+    // scroll whenever the app is tracking the mouse, so a phone can do neither.
+    // We translate a vertical swipe into synthetic wheel notches dispatched back
+    // at xterm, so it produces exactly what a real wheel would: a mouse-wheel
+    // report when the app tracks the mouse (Claude Code then scrolls its own
+    // history, just like the laptop) or cursor keys when it doesn't (less/man).
+    // The normal buffer with no mouse tracking keeps xterm's native touch
+    // scrollback untouched.
     let altActive = terminal.buffer.active.type === 'alternate';
     const bufferSubscription = terminal.buffer.onBufferChange(() => {
       altActive = terminal.buffer.active.type === 'alternate';
     });
+    // Hijack the swipe only where xterm's own touch scroll won't do the right
+    // thing: the alternate buffer (no scrollback to pan), or any buffer where the
+    // app has taken over the mouse. Everything else keeps native touch scroll.
+    const shouldDriveTui = () => altActive || terminal.modes.mouseTrackingMode !== 'none';
+    // Feed xterm one synthetic wheel notch per step. deltaMode LINE with a ±1
+    // deltaY makes xterm read exactly one row per event; clientX/Y anchor any
+    // resulting mouse report to a real cell so the coordinates resolve. Whatever
+    // the app is doing — mouse tracking or plain cursor-key scrolling — xterm
+    // then reacts identically to a physical wheel.
+    const emitWheel = (steps: number, clientX: number, clientY: number) => {
+      const target = terminal.element;
+      if (!target) return;
+      const deltaY = steps > 0 ? 1 : -1;
+      for (let index = 0; index < Math.abs(steps); index += 1) {
+        target.dispatchEvent(
+          new WheelEvent('wheel', {
+            deltaY,
+            deltaMode: WheelEvent.DOM_DELTA_LINE,
+            clientX,
+            clientY,
+            bubbles: true,
+            cancelable: true,
+          }),
+        );
+      }
+    };
     let lastTouchY: number | null = null;
     let carriedPx = 0;
     const onTouchStart = (event: TouchEvent) => {
-      // Only single-finger drags in the alternate buffer, and only when input can
-      // actually reach the PTY; otherwise leave the touch to its default handling.
+      // Only single-finger drags where we should drive the TUI, and only when
+      // input can actually reach the PTY; otherwise leave the touch to its
+      // default handling (native scrollback pan in the normal buffer).
       const touch = event.touches[0];
-      if (!altActive || !inputEnabledRef.current || event.touches.length !== 1 || !touch) {
+      if (!shouldDriveTui() || !inputEnabledRef.current || event.touches.length !== 1 || !touch) {
         lastTouchY = null;
         return;
       }
@@ -113,9 +145,9 @@ export function TerminalView({
       carriedPx += lastTouchY - currentY; // upward drag is positive
       lastTouchY = currentY;
       const rowHeightPx = element.clientHeight / Math.max(terminal.rows, 1);
-      const { data, remainderPx } = scrollToCursorKeys(carriedPx, rowHeightPx);
-      if (data) {
-        onInputRef.current(data);
+      const { steps, remainderPx } = wheelStepsFromDrag(carriedPx, rowHeightPx);
+      if (steps !== 0) {
+        emitWheel(steps, touch.clientX, currentY);
         carriedPx = remainderPx;
       }
     };
