@@ -471,6 +471,11 @@ export function registerWebSocketRoutes(
               });
               if (job === null) throw new AppError(404, 'JOB_NOT_FOUND', 'Job not found.');
               connections.beginSubscription(socket, job.id);
+              // Persist any chunks still buffered from the live path before replaying,
+              // so a (re)subscribing viewer catches up to the current screen with no
+              // gap — live frames that arrive during replay are queued by the
+              // subscription and delivered when it finishes.
+              await jobs.flushOutput(job.id);
               const chunks = await jobs.replay(userId, job.id, message.payload.afterSequence);
               for (const chunk of chunks) {
                 const output: ServerToClientMessage = createMessage('job.output', {

@@ -16,6 +16,13 @@ import type { ServerEnvironment } from '../env.js';
 import { AppError } from '../lib/errors.js';
 
 const OPEN_STATE = 1;
+
+// A viewer that lets this many bytes queue in its send buffer has fallen too far
+// behind live output to catch up. Rather than buffer unbounded stale terminal
+// frames in server memory (a fullscreen TUI can outrun a slow client for
+// minutes), we close it so it reconnects and replays straight to the current
+// screen. Sized above a legitimate burst (a coalesced resume dump is a few MB).
+const MAX_CLIENT_SEND_BACKLOG_BYTES = 8 * 1024 * 1024;
 const RELAY_VERSION = 1;
 const DEFAULT_NAMESPACE = 'relaydock';
 const DEFAULT_PRESENCE_TTL_MS = 45_000;
@@ -849,6 +856,14 @@ export class ConnectionHub {
       const subscription = client.subscriptions.get(jobId);
       if (subscription === undefined) continue;
       if (!subscription.replaying) {
+        if (client.socket.bufferedAmount > MAX_CLIENT_SEND_BACKLOG_BYTES) {
+          // The viewer can't keep up; close it so it reconnects and replays to the
+          // current screen instead of us hoarding minutes of stale output.
+          if (client.socket.readyState === OPEN_STATE) {
+            client.socket.close(1013, 'viewer fell behind; reconnect to catch up');
+          }
+          continue;
+        }
         this.send(client.socket, message);
         continue;
       }
