@@ -44,6 +44,38 @@ describe('client output subscription replay', () => {
   });
 });
 
+describe('client backpressure safety valve', () => {
+  const userId = '6dfd79d4-cf11-43b9-b6ff-180e1a163961';
+  const jobId = '7b47872c-ed62-44ac-93d5-103fd62a5aa7';
+  const liveChunk = () =>
+    createMessage('job.output', { jobId, sequence: 1, stream: 'stdout' as const, data: 'x' });
+
+  function liveViewer(bufferedAmount: number) {
+    const send = vi.fn();
+    const close = vi.fn();
+    const socket = { readyState: 1, send, close, bufferedAmount } as unknown as WebSocket;
+    const hub = new ConnectionHub();
+    hub.attachClient(userId, socket);
+    hub.beginSubscription(socket, jobId);
+    hub.finishSubscription(socket, jobId);
+    return { hub, send, close };
+  }
+
+  it('closes a live viewer whose send buffer has ballooned past the cap', async () => {
+    const { hub, send, close } = liveViewer(16 * 1024 * 1024);
+    await hub.broadcastJob(userId, jobId, liveChunk());
+    expect(send).not.toHaveBeenCalled();
+    expect(close).toHaveBeenCalledWith(1013, expect.stringContaining('behind'));
+  });
+
+  it('delivers to a viewer whose buffer is within bounds', async () => {
+    const { hub, send, close } = liveViewer(1024);
+    await hub.broadcastJob(userId, jobId, liveChunk());
+    expect(send).toHaveBeenCalledOnce();
+    expect(close).not.toHaveBeenCalled();
+  });
+});
+
 describe('local connection behavior', () => {
   it('attaches, sends to, heartbeats, and conditionally detaches an agent', async () => {
     const hub = new ConnectionHub({ instanceId: 'local-test-instance' });
